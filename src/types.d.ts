@@ -1,3 +1,6 @@
+// ===== Anime4K Library Types =====
+import type { Anime4KPipeline } from 'anime4k-webgpu-async';
+
 // ===== CSS Module Declarations =====
 declare module "*.css";
 
@@ -18,7 +21,7 @@ interface EnhancementEffect {
   id: string;       // Unique ID, e.g., "anime4k/Upscale/CNNx2VL"
   name: string;     // Display name, e.g., "Upscale CNNx2VL"
   className: string; // Class name used for instantiation in code, e.g., "CNNx2VL"
-  params?: { [key: string]: any }; // Could be used in the future for effect parameter configuration
+  params?: Record<string, number>; // Effect parameter configuration (all numeric values)
   upscaleFactor?: number; // Upscale factor of the effect, e.g. 2 means 2x upscale
 }
 
@@ -59,14 +62,65 @@ interface ParamSliderConfig {
   formatValue: (v: number) => string; // display format
 }
 
+// ===== Effect Class Descriptor (constructor parameter) =====
+interface EffectClassDescriptor {
+  device: GPUDevice;
+  inputTexture: GPUTexture;
+  [key: string]: unknown;
+}
+
+// ===== Anime4K Pipeline Types =====
+
+/** Anime4K pipeline with optional destroy() that some implementations expose. */
+interface DestroyablePipeline extends Anime4KPipeline {
+  destroy?(): void;
+}
+
+/** Constructor signature for Anime4K library effect classes. */
+type Anime4KClassCtor = new (descriptor: EffectClassDescriptor) => DestroyablePipeline;
+
+/** The anime4k-webgpu-async module viewed as a className -> constructor map. */
+type Anime4KClassMap = Record<string, Anime4KClassCtor>;
+
+/** Shape of pipeline objects traversed by safeDestroy -- expose destroy + optional children. */
+interface DisposablePipeline {
+  destroy?: () => void;
+  pipelines?: unknown[];
+  outputTexture?: { destroy?: () => void };
+}
+
+// ===== WebGPU Extension Types =====
+
+/** GPU adapter info (Chrome's deprecated requestAdapterInfo() API, pre-Chrome 113). */
+interface GPUAdapterInfo {
+  vendor: string;
+  architecture: string;
+  device: string;
+  description: string;
+}
+
+/** GPU adapter with the deprecated requestAdapterInfo() method. */
+interface GPUAdapterWithInfo {
+  requestAdapterInfo?: () => Promise<GPUAdapterInfo>;
+}
+
+// ===== Scheduler API (Chrome 115+, not yet in standard lib.dom.d.ts) =====
+
+/** scheduler.yield() gives input events priority over animation frames. */
+declare global {
+  interface Scheduler {
+    yield(): Promise<void>;
+  }
+}
+
 // ===== Custom Effect Descriptor (for renderer custom-effect registry) =====
 interface CustomEffectDescriptor {
-  EffectClass: new (descriptor: any) => unknown;
+  EffectClass: new (descriptor: EffectClassDescriptor) => DestroyablePipeline;
   getDescriptor: (
     device: GPUDevice,
     inputTexture: GPUTexture,
-    params?: { [key: string]: any },
-  ) => Record<string, unknown>;
+    params?: Record<string, number>,
+  ) => EffectClassDescriptor;
 }
 
 // ===== GPU Benchmark Result Interface =====
@@ -165,6 +219,13 @@ export {
   EffectClassName,
   ParamSliderConfig,
   CustomEffectDescriptor,
+  EffectClassDescriptor,
+  DestroyablePipeline,
+  Anime4KClassCtor,
+  Anime4KClassMap,
+  DisposablePipeline,
+  GPUAdapterInfo,
+  GPUAdapterWithInfo,
   BenchmarkProgress,
   RendererOptions,
 };

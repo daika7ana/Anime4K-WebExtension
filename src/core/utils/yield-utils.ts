@@ -14,8 +14,8 @@
  */
 export async function yieldToMain(): Promise<void> {
   // Prefer scheduler.yield() — gives input events priority over animation frames
-  const g = globalThis as any;
-  if (typeof g.scheduler !== 'undefined' && typeof g.scheduler.yield === 'function') {
+  const g = globalThis as unknown as { scheduler?: Scheduler };
+  if (g.scheduler && typeof g.scheduler.yield === 'function') {
     return g.scheduler.yield();
   }
   // Fallback: MessageChannel-based yield (fires as soon as possible, not at frame boundary)

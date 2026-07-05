@@ -172,7 +172,7 @@ export class VideoEnhancer {
    */
   private async initRenderer(): Promise<void> {
     // Detect DRM-protected content early (EME sets mediaKeys on the video element)
-    if ((this.video as any).mediaKeys) {
+    if (this.video.mediaKeys) {
       throw new Error('DRM detected. Video enhancement is not supported for DRM-protected content.');
     }
 
@@ -191,7 +191,12 @@ export class VideoEnhancer {
     const settings = await getSettings();
 
     const { selectedModeId, enhancementModes, targetResolutionSetting } = settings;
-    const selectedMode = enhancementModes.find((m: EnhancementMode) => m.id === selectedModeId) || enhancementModes.find((m: EnhancementMode) => m.isBuiltIn)!;
+    const selectedMode =
+      enhancementModes.find((m: EnhancementMode) => m.id === selectedModeId)
+      ?? enhancementModes.find((m: EnhancementMode) => m.isBuiltIn);
+    if (!selectedMode) {
+      throw new Error('No valid enhancement mode found');
+    }
     this.currentModeId = selectedMode.id;
 
     const targetDimensions = this.calculateTargetDimensions(
@@ -254,7 +259,12 @@ export class VideoEnhancer {
 
     console.log('[Anime4KWebExt] Updating renderer with new settings...');
     const { selectedModeId, enhancementModes, targetResolutionSetting } = newSettings;
-    const selectedMode = enhancementModes.find((m: EnhancementMode) => m.id === selectedModeId) || enhancementModes.find((m: EnhancementMode) => m.isBuiltIn)!;
+    const selectedMode =
+      enhancementModes.find((m: EnhancementMode) => m.id === selectedModeId)
+      ?? enhancementModes.find((m: EnhancementMode) => m.isBuiltIn);
+    if (!selectedMode) {
+      throw new Error('No valid enhancement mode found');
+    }
 
     const newTargetDimensions = this.calculateTargetDimensions(
       this.video.videoWidth,

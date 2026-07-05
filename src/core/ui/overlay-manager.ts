@@ -14,8 +14,8 @@ export class OverlayManager {
   private hideButtonTimeout?: number;
 
   private attachmentStrategy: 'sibling' | 'body' = 'sibling';
-  private boundUpdatePosition?: () => void;
-  private boundHandleFullscreenChange?: () => void;
+  private boundUpdatePosition!: () => void;
+  private boundHandleFullscreenChange!: () => void;
 
   private resizeObserver: ResizeObserver;
   private mutationObserver: MutationObserver;
@@ -109,7 +109,7 @@ export class OverlayManager {
     this.host.style.display = ''; // Ensure visible
 
     const videoStyle = window.getComputedStyle(this.video);
-    let hostStyles: any;
+    let hostStyles: Record<string, string>;
 
     if (this.attachmentStrategy === 'body') {
       // Body strategy: use getBoundingClientRect for viewport-relative position
@@ -252,12 +252,14 @@ export class OverlayManager {
     }
 
     // Ensure canvas is in the DOM
-    if (!this.canvas!.parentElement) {
-      this.video.parentElement?.insertBefore(this.canvas!, this.video);
+    const canvas = this.canvas;
+    if (!canvas) return;
+    if (!canvas.parentElement) {
+      this.video.parentElement?.insertBefore(canvas, this.video);
     }
 
     this.updatePosition(); // Update position and size
-    this.canvas!.style.visibility = 'visible'; // Make visible
+    canvas.style.visibility = 'visible'; // Make visible
     this.video.style.opacity = '0'; // Hide original video
   }
 
@@ -328,9 +330,9 @@ export class OverlayManager {
 
     // If switched to body strategy, remove additional listeners
     if (this.attachmentStrategy === 'body') {
-      window.removeEventListener('resize', this.boundUpdatePosition!);
-      window.removeEventListener('scroll', this.boundUpdatePosition!, true);
-      document.removeEventListener('fullscreenchange', this.boundHandleFullscreenChange!);
+      window.removeEventListener('resize', this.boundUpdatePosition);
+      window.removeEventListener('scroll', this.boundUpdatePosition, true);
+      document.removeEventListener('fullscreenchange', this.boundHandleFullscreenChange);
     }
 
     if (this.hideButtonTimeout) {

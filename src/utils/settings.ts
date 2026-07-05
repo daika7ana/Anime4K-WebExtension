@@ -219,27 +219,32 @@ export async function saveSettings(settings: Partial<Anime4KWebExtSettings>): Pr
     'hasCompletedOnboarding',
   ];
 
-  const syncSettings: Partial<SyncedSettings> = {};
-  const localSettings: Partial<LocalSettings> = {};
+  const syncSettings: Partial<Record<keyof SyncedSettings, unknown>> = {};
+  const localSettings: Partial<Record<keyof LocalSettings, unknown>> = {};
+
+  // Cast to Record<string, unknown> so we can dynamically index on keys
+  // that may exist at runtime but aren't part of the compile-time Partial<Anime4KWebExtSettings>
+  // (e.g. gpuBenchmarkResult lives in LocalSettings but not in Anime4KWebExtSettings).
+  const source = settings as Record<string, unknown>;
 
   for (const key of syncKeys) {
     if (key in settings) {
-      (syncSettings as any)[key] = (settings as any)[key];
+      syncSettings[key] = source[key];
     }
   }
 
   for (const key of localKeys) {
     if (key in settings) {
-      (localSettings as any)[key] = (settings as any)[key];
+      localSettings[key] = source[key];
     }
   }
 
   const promises: Promise<void>[] = [];
   if (Object.keys(syncSettings).length > 0) {
-    promises.push(saveSyncedSettings(syncSettings));
+    promises.push(saveSyncedSettings(syncSettings as Partial<SyncedSettings>));
   }
   if (Object.keys(localSettings).length > 0) {
-    promises.push(saveLocalSettings(localSettings));
+    promises.push(saveLocalSettings(localSettings as Partial<LocalSettings>));
   }
 
   await Promise.all(promises);

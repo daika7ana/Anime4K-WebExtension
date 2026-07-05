@@ -286,7 +286,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Notify content script
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs[0]?.id) {
-          chrome.tabs.sendMessage(tabs[0].id, { type: 'SETTINGS_UPDATED' }, (response) => {
+          chrome.tabs.sendMessage(tabs[0].id, { type: 'SETTINGS_UPDATED' }, (_response) => {
             if (chrome.runtime.lastError) {
               console.warn('Message send error:', chrome.runtime.lastError.message);
             }

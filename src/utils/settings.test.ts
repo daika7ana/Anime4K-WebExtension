@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   synchronizeEffectsForCustomModes,
   getEffectsForMode,
@@ -6,7 +6,7 @@ import {
 } from './settings';
 import { AVAILABLE_EFFECTS } from './effects-map';
 import { resolveEffectChain } from './effect-chain-templates';
-import type { CustomMode, BuiltInMode, EnhancementEffect, PerformanceTier } from '../types';
+import type { CustomMode, BuiltInMode, PerformanceTier } from '../types';
 
 describe('BUILTIN_MODES', () => {
   it('contains exactly 6 modes', () => {

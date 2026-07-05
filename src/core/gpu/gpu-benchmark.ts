@@ -3,7 +3,7 @@
  * Tests using real Anime4K effects
  */
 
-import type { PerformanceTier, GPUBenchmarkResult, EnhancementEffect, BenchmarkProgress } from '@/types';
+import type { PerformanceTier, GPUBenchmarkResult, EnhancementEffect, BenchmarkProgress, DestroyablePipeline, Anime4KClassMap, GPUAdapterWithInfo } from '@/types';
 import { resolveEffectChain } from '@utils/effect-chain-templates';
 
 // Test configuration
@@ -34,7 +34,7 @@ function isDeviceValid(device: GPUDevice): boolean {
 /**
  * Safely destroy pipeline array
  */
-async function safeDestroyPipelines(device: GPUDevice, pipelines: any[]): Promise<void> {
+async function safeDestroyPipelines(device: GPUDevice, pipelines: DestroyablePipeline[]): Promise<void> {
     // First wait for the GPU queue to complete
     try {
         await device.queue.onSubmittedWorkDone();
@@ -291,13 +291,13 @@ async function runEffectChainTest(
     Anime4K: typeof import('anime4k-webgpu-async')
 ): Promise<{ avgTime: number; maxTime: number }> {
     // Build pipelines
-    const pipelines: any[] = [];
+    const pipelines: DestroyablePipeline[] = [];
     let currentTexture: GPUTexture = inputTexture;
     let curWidth = TEST_WIDTH;
     let curHeight = TEST_HEIGHT;
 
     // Get Downscale class dynamically
-    const DownscaleClass = (Anime4K as Record<string, any>).Downscale;
+    const DownscaleClass = (Anime4K as unknown as Anime4KClassMap).Downscale;
 
     // Pre-calculate remaining upscale factors
     const upscaleFactors = effects.map(e => e.upscaleFactor ?? 1);
@@ -308,7 +308,7 @@ async function runEffectChainTest(
     for (let i = 0; i < effects.length; i++) {
         const effect = effects[i];
         try {
-            const EffectClass = (Anime4K as Record<string, any>)[effect.className];
+            const EffectClass = (Anime4K as unknown as Anime4KClassMap)[effect.className];
             if (!EffectClass) {
                 console.warn(`[GPUBenchmark] Effect class not found: ${effect.className}`);
                 continue;
@@ -438,8 +438,9 @@ async function getGPUAdapterInfo(): Promise<string> {
         const adapter = await navigator.gpu.requestAdapter();
         if (!adapter) return 'No adapter';
 
-        const info = (adapter as any).requestAdapterInfo
-            ? await (adapter as any).requestAdapterInfo()
+        const gpuAdapter = adapter as unknown as GPUAdapterWithInfo;
+        const info = gpuAdapter.requestAdapterInfo
+            ? await gpuAdapter.requestAdapterInfo()
             : { vendor: '', architecture: '', device: '', description: '' };
 
         return JSON.stringify({

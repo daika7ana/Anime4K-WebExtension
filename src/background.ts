@@ -95,7 +95,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 // Listen for requests from content scripts/popup/options
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((request, _sender, _sendResponse) => {
   if (request.type === 'SETTINGS_UPDATED') {
     console.log('[Background] Settings updated, checking DNR rules...');
     updateDNRuleset();

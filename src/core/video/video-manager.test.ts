@@ -43,7 +43,6 @@ vi.mock('@/constants', () => ({
 import {
   processVideoElement,
   initializeOnPage,
-  setupDOMObserver,
   deinitializeOnPage,
 } from './video-manager';
 import * as EnhancerMap from './enhancer-map';

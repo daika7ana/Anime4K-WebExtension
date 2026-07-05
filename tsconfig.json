@@ -30,6 +30,8 @@
     "**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "dist-chrome",
+    "dist-firefox"
   ]
 }

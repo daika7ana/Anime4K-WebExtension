@@ -14,7 +14,6 @@ const TIER_DISPLAY: Record<PerformanceTier, { icon: string; name: string }> = {
     ultra: { icon: '🔬', name: chrome.i18n.getMessage('tierUltra') || 'Ultra' },
 };
 
-let currentStep = 1;
 let selectedTier: PerformanceTier = 'balanced';
 let benchmarkResult: GPUBenchmarkResult | null = null;
 
@@ -38,10 +37,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         startTestBtn.disabled = true;
         skipTestBtn.style.display = 'none';
 
-        const testStatus = document.getElementById('test-status')!;
-        const progressContainer = document.getElementById('progress-container')!;
-        const progressFill = document.getElementById('progress-fill')!;
-        const progressText = document.getElementById('progress-text')!;
+        const testStatus = document.getElementById('test-status');
+        const progressContainer = document.getElementById('progress-container');
+        const progressFill = document.getElementById('progress-fill');
+        const progressText = document.getElementById('progress-text');
+        if (!testStatus || !progressContainer || !progressFill || !progressText) {
+          console.error('Required benchmark UI elements not found');
+          startTestBtn.disabled = false;
+          skipTestBtn.style.display = 'block';
+          return;
+        }
 
         testStatus.style.display = 'none';
         progressContainer.style.display = 'block';
@@ -144,16 +149,18 @@ function goToStep(step: number): void {
         el.classList.toggle('active', i + 1 === step);
     });
 
-    currentStep = step;
-
     if (step === 2) {
         updateTierButtons();
     }
 }
 
 function updateResultDisplay(): void {
-    const resultTier = document.getElementById('result-tier')!;
-    const resultDesc = document.getElementById('result-desc')!;
+    const resultTier = document.getElementById('result-tier');
+    const resultDesc = document.getElementById('result-desc');
+    if (!resultTier || !resultDesc) {
+      console.error('Required result display elements not found');
+      return;
+    }
 
     const display = TIER_DISPLAY[selectedTier];
     resultTier.textContent = `${display.icon} ${display.name}`;

@@ -109,8 +109,10 @@ const renderModesUI = () => {
       }
       draggedElement = card;
       draggedModeId = mode.id;
-      e.dataTransfer!.effectAllowed = 'move';
-      e.dataTransfer!.setData('text/plain', mode.id);
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', mode.id);
+      }
       setTimeout(() => card.classList.add('dragging'), 0);
     });
 
@@ -291,7 +293,9 @@ const renderModesUI = () => {
           draggedElement = effectItem;
           draggedModeId = mode.id;
           draggedEffectIndex = index;
-          e.dataTransfer!.effectAllowed = 'move';
+          if (e.dataTransfer) {
+            e.dataTransfer.effectAllowed = 'move';
+          }
           setTimeout(() => effectItem.classList.add('dragging'), 0);
         });
 
@@ -720,13 +724,18 @@ const setupEventListeners = () => {
   importModesBtn.addEventListener('click', async () => {
     try {
       const json = await openFile();
-      const importedModes = JSON.parse(json) as EnhancementMode[];
+      const importedRaw: unknown = JSON.parse(json);
 
-      if (!Array.isArray(importedModes)) throw new Error('Invalid format: not an array');
+      if (!Array.isArray(importedRaw)) throw new Error('Invalid format: not an array');
 
       const newModes: CustomMode[] = [];
-      for (const mode of importedModes) {
-        if (typeof mode !== 'object' || typeof mode.name !== 'string' || !Array.isArray((mode as any).effects)) {
+      for (const item of importedRaw) {
+        if (typeof item !== 'object' || item === null) {
+          console.warn('Skipping invalid mode object on import:', item);
+          continue;
+        }
+        const mode = item as Record<string, unknown>;
+        if (typeof mode.name !== 'string' || !Array.isArray(mode.effects)) {
           console.warn('Skipping invalid mode object on import:', mode);
           continue;
         }
@@ -735,7 +744,7 @@ const setupEventListeners = () => {
           id: `custom-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
           name: mode.name,
           isBuiltIn: false,
-          effects: (mode as any).effects,
+          effects: mode.effects as EnhancementEffect[],
         };
         newModes.push(newMode);
       }

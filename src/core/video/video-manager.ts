@@ -262,7 +262,7 @@ function setupLightweightVideoDetection(): MutationObserver {
  */
 export async function handleSettingsUpdate(
   message: { type: string, modifiedModeId?: string },
-  sendResponse: (response?: any) => void
+  sendResponse: (response?: { status: string; message: string }) => void
 ): Promise<void> {
   console.log('Received settings update:', message);
 

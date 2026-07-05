@@ -30,6 +30,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.5.3
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
@@ -60,7 +65,7 @@ jobs:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
         run: |
-          npx web-ext@10.4.0 sign \
+          pnpm dlx web-ext@10.4.0 sign \
             --source-dir=anime4k-webextension-plus-firefox \
             --api-key="$AMO_JWT_ISSUER" \
             --api-secret="$AMO_JWT_SECRET" \
@@ -79,7 +84,7 @@ jobs:
           client-id: ${{ secrets.EDGE_CLIENT_ID }}
 
       - name: Upload to Chrome Web Store
-        run: npx chrome-webstore-upload-cli@4
+        run: pnpm dlx chrome-webstore-upload-cli@4
         env:
           EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
           PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}

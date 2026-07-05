@@ -29,7 +29,8 @@ async function shouldInitialize(): Promise<boolean> {
     if (window !== window.top) {
       try {
         // Same-origin: can access top frame's location directly
-        if (isUrlWhitelisted(window.top!.location.href, rules)) return true;
+        const topUrl = window.top?.location.href;
+        if (topUrl && isUrlWhitelisted(topUrl, rules)) return true;
       } catch {
         // Cross-origin: fall back to document.referrer (the URL that loaded this iframe)
         if (document.referrer && isUrlWhitelisted(document.referrer, rules)) return true;

@@ -11,7 +11,6 @@
 import { PipelinePreWarmer } from './pipeline-prewarmer';
 
 // --- Static GPU pre-warm state (shared across all Renderer instances) ---
-let prewarmedAdapter: GPUAdapter | null = null;
 let prewarmedDevice: GPUDevice | null = null;
 let prewarmPromise: Promise<void> | null = null;
 let prewarmTimeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -35,7 +34,6 @@ export function preWarmGPU(): void {
       }
       const adapter = await navigator.gpu.requestAdapter(adapterOptions);
       if (!adapter) return;
-      prewarmedAdapter = adapter;
       const adapterLimits = adapter.limits;
       prewarmedDevice = await adapter.requestDevice({
         requiredLimits: {
@@ -50,7 +48,6 @@ export function preWarmGPU(): void {
           console.log('[Anime4KWebExt] Prewarmed GPU device unclaimed after 30s, releasing.');
           prewarmedDevice.destroy();
           prewarmedDevice = null;
-          prewarmedAdapter = null;
         }
         prewarmTimeoutId = null;
       }, 30000);
@@ -71,7 +68,6 @@ export function claimPreWarmedDevice(): GPUDevice | null {
   if (prewarmedDevice) {
     const device = prewarmedDevice;
     prewarmedDevice = null;
-    prewarmedAdapter = null;
     // Cancel the 30s auto-destroy timer
     if (prewarmTimeoutId) {
       clearTimeout(prewarmTimeoutId);
@@ -123,7 +119,6 @@ export function invalidatePreWarm(): void {
   }
   prewarmPromise = null;
   prewarmedDevice = null;
-  prewarmedAdapter = null;
 }
 
 /**

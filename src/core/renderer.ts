@@ -1,8 +1,8 @@
-import type { Dimensions, EnhancementEffect, RendererOptions } from '@/types';
+import type { Dimensions, EnhancementEffect, RendererOptions, DestroyablePipeline } from '@/types';
 import { RendererInitializationError, RendererRuntimeError } from '@core/errors';
 
 import * as GPUDeviceManager from '@core/gpu/gpu-device-manager';
-import { buildEffectPipelines, paramsEqual, PipelineWithDestroy } from '@core/gpu/pipeline-builder';
+import { buildEffectPipelines, paramsEqual } from '@core/gpu/pipeline-builder';
 import fullscreenTexturedQuadWGSL from '@shaders/fullscreen-textured-quad.wgsl';
 import sampleExternalTextureWGSL from '@shaders/sample-external-texture.wgsl';
 
@@ -56,7 +56,7 @@ export class Renderer {
   /** Intermediate texture used to copy image data from video frames */
   private videoFrameTexture!: GPUTexture;
   /** Effect processing pipeline chain */
-  private pipelines: PipelineWithDestroy[] = [];
+  private pipelines: DestroyablePipeline[] = [];
   /** Generation counter to prevent concurrent buildPipelines() calls from clobbering each other */
   private buildGeneration = 0;
 
@@ -136,10 +136,11 @@ export class Renderer {
         console.log('[Anime4KWebExt] Renderer: Using ImageBitmap fallback for copying video frames.');
       }
 
-      this.context = this.canvas.getContext('webgpu')!;
-      if (!this.context) {
+      const context = this.canvas.getContext('webgpu');
+      if (!context) {
         throw new RendererInitializationError('Failed to get WebGPU context from canvas.');
       }
+      this.context = context;
       this.presentationFormat = navigator.gpu.getPreferredCanvasFormat();
       this.context.configure({
         device: this.device,
@@ -244,9 +245,16 @@ export class Renderer {
     const h = this.video.videoHeight;
     if (!this.drmCanvas || this.drmCanvas.width !== w || this.drmCanvas.height !== h) {
       this.drmCanvas = new OffscreenCanvas(w, h);
-      this.drmCtx = this.drmCanvas.getContext('2d')!;
+      const ctx = this.drmCanvas.getContext('2d');
+      if (!ctx) {
+        throw new RendererRuntimeError('Failed to get 2D context for DRM fallback canvas', { recoverable: false });
+      }
+      this.drmCtx = ctx;
     }
-    return this.drmCtx!;
+    if (!this.drmCtx) {
+      throw new RendererRuntimeError('DRM canvas context not initialized', { recoverable: false });
+    }
+    return this.drmCtx;
   }
 
   /**
@@ -283,12 +291,16 @@ export class Renderer {
    * Creates the render bind group, which binds actual resources (sampler and final texture) to the render pipeline.
    */
   private createRenderBindGroup(): void {
+    const lastPipeline = this.pipelines.at(-1);
+    if (!lastPipeline) {
+      throw new RendererInitializationError('No pipelines available for render bind group');
+    }
     this.renderBindGroup = this.device.createBindGroup({
       layout: this.renderBindGroupLayout,
       entries: [
         { binding: 1, resource: this.sampler },
         // Get the output texture of the last pipeline in the effect chain as input for final rendering
-        { binding: 2, resource: this.pipelines.at(-1)!.getOutputTexture().createView() },
+        { binding: 2, resource: lastPipeline.getOutputTexture().createView() },
       ],
     });
   }
@@ -336,8 +348,11 @@ export class Renderer {
         // This bypasses the "back resource" restriction for software DRM (Widevine L3).
         const ctx = this.ensureDrmCanvas();
         ctx.drawImage(this.video, 0, 0);
+        if (!this.drmCanvas) {
+          throw new RendererRuntimeError('DRM canvas not initialized', { recoverable: false });
+        }
         this.device.queue.copyExternalImageToTexture(
-          { source: this.drmCanvas! },
+          { source: this.drmCanvas },
           { texture: this.videoFrameTexture },
           [this.video.videoWidth, this.video.videoHeight]
         );
@@ -352,7 +367,8 @@ export class Renderer {
       // Validate DRM canvas fallback isn't producing black frames (hardware DRM / Widevine L1)
       if (this.useDrmCanvasFallback && !this.drmFrameValidated) {
         try {
-          const ctx = this.drmCtx!;
+          if (!this.drmCtx) return false;
+          const ctx = this.drmCtx;
           const w = this.video.videoWidth;
           const h = this.video.videoHeight;
           const samples = [

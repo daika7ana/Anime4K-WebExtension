@@ -40,8 +40,8 @@ Significantly improve the image quality of anime videos with the Anime4K real-ti
 #### From Source Code
 
 1. Clone this repository
-2. Run `npm install` to install dependencies
-3. Run `npm run build` to build the project
+2. Run `pnpm install` to install dependencies
+3. Run `pnpm build` to build the project
 4. Load the built extension in your browser:
    - Chrome: Open extensions page (`chrome://extensions`) → Enable "Developer mode" → "Load unpacked" → Select the `dist` directory in the project
    - Edge: Open extensions page (`edge://extensions`) → Enable "Developer mode" → "Load unpacked" → Select the `dist` directory in the project
