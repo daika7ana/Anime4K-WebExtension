@@ -1,0 +1,148 @@
+import { describe, it, expect } from 'vitest';
+import { AVAILABLE_EFFECTS } from './effects-map';
+
+describe('AVAILABLE_EFFECTS', () => {
+  // ── Catalog size ──────────────────────────────────────────────
+  it('has exactly 17 effects in the catalog', () => {
+    // 1 CAS + 1 ClampHighlights + 1 Debanding + 1 DoG + 1 BilateralMean
+    // + 6 Restore + 6 Upscale = 17
+    expect(AVAILABLE_EFFECTS).toHaveLength(17);
+  });
+
+  // ── ID uniqueness ─────────────────────────────────────────────
+  it('has unique IDs for every effect', () => {
+    const ids = AVAILABLE_EFFECTS.map(e => e.id);
+    const uniqueIds = new Set(ids);
+    expect(uniqueIds.size).toBe(ids.length);
+  });
+
+  // ── className uniqueness ──────────────────────────────────────
+  it('has unique classNames for every effect', () => {
+    const classNames = AVAILABLE_EFFECTS.map(e => e.className);
+    const uniqueClassNames = new Set(classNames);
+    expect(uniqueClassNames.size).toBe(classNames.length);
+  });
+
+  // ── Required fields ───────────────────────────────────────────
+  it('every effect has all required fields (id, name, className)', () => {
+    for (const effect of AVAILABLE_EFFECTS) {
+      expect(effect.id).toBeTruthy();
+      expect(effect.name).toBeTruthy();
+      expect(effect.className).toBeTruthy();
+      expect(typeof effect.id).toBe('string');
+      expect(typeof effect.name).toBe('string');
+      expect(typeof effect.className).toBe('string');
+    }
+  });
+
+  // ── Key effects present ───────────────────────────────────────
+  describe('key effects exist', () => {
+    const findById = (id: string) =>
+      AVAILABLE_EFFECTS.find(e => e.id === id);
+
+    it('includes CAS (sharpen)', () => {
+      expect(findById('anime4k/Sharpen/CAS')).toBeDefined();
+    });
+
+    it('includes ClampHighlights (helper)', () => {
+      expect(findById('anime4k/Helper/ClampHighlights')).toBeDefined();
+    });
+
+    it('includes Debanding', () => {
+      expect(findById('anime4k/Debanding/Debanding')).toBeDefined();
+    });
+
+    it('includes DoG (deblur)', () => {
+      expect(findById('anime4k/Deblur/DoG')).toBeDefined();
+    });
+
+    it('includes BilateralMean (denoise)', () => {
+      expect(findById('anime4k/Denoise/BilateralMean')).toBeDefined();
+    });
+
+    it('includes all 6 Restore effects', () => {
+      const restoreEffects = AVAILABLE_EFFECTS.filter(e => e.id.startsWith('anime4k/Restore/'));
+      expect(restoreEffects).toHaveLength(6);
+      expect(findById('anime4k/Restore/CNNM')).toBeDefined();
+      expect(findById('anime4k/Restore/CNNSoftM')).toBeDefined();
+      expect(findById('anime4k/Restore/CNNSoftVL')).toBeDefined();
+      expect(findById('anime4k/Restore/CNNVL')).toBeDefined();
+      expect(findById('anime4k/Restore/CNNUL')).toBeDefined();
+      expect(findById('anime4k/Restore/GANUUL')).toBeDefined();
+    });
+
+    it('includes all 6 Upscale effects', () => {
+      const upscaleEffects = AVAILABLE_EFFECTS.filter(e => e.id.startsWith('anime4k/Upscale/'));
+      expect(upscaleEffects).toHaveLength(6);
+      expect(findById('anime4k/Upscale/CNNx2M')).toBeDefined();
+      expect(findById('anime4k/Upscale/CNNx2VL')).toBeDefined();
+      expect(findById('anime4k/Upscale/DenoiseCNNx2VL')).toBeDefined();
+      expect(findById('anime4k/Upscale/CNNx2UL')).toBeDefined();
+      expect(findById('anime4k/Upscale/GANx3L')).toBeDefined();
+      expect(findById('anime4k/Upscale/GANx4UUL')).toBeDefined();
+    });
+  });
+
+  // ── Upscale factors ───────────────────────────────────────────
+  describe('upscaleFactor', () => {
+    it('upscale effects have the correct upscaleFactor', () => {
+      const upscaleEffects = AVAILABLE_EFFECTS.filter(e => e.upscaleFactor !== undefined);
+
+      // x2 effects
+      for (const e of ['CNNx2M', 'CNNx2VL', 'DenoiseCNNx2VL', 'CNNx2UL']) {
+        const effect = upscaleEffects.find(ue => ue.className === e);
+        expect(effect).toBeDefined();
+        expect(effect!.upscaleFactor).toBe(2);
+      }
+
+      // x3 effect
+      const gan3 = upscaleEffects.find(ue => ue.className === 'GANx3L');
+      expect(gan3).toBeDefined();
+      expect(gan3!.upscaleFactor).toBe(3);
+
+      // x4 effect
+      const gan4 = upscaleEffects.find(ue => ue.className === 'GANx4UUL');
+      expect(gan4).toBeDefined();
+      expect(gan4!.upscaleFactor).toBe(4);
+    });
+
+    it('non-upscale effects have no upscaleFactor', () => {
+      const nonUpscaleEffects = AVAILABLE_EFFECTS.filter(
+        e => !e.id.startsWith('anime4k/Upscale/')
+      );
+      expect(nonUpscaleEffects.length).toBeGreaterThan(0);
+      for (const effect of nonUpscaleEffects) {
+        expect(effect.upscaleFactor).toBeUndefined();
+      }
+    });
+  });
+
+  // ── Effect parameter defaults ─────────────────────────────────
+  describe('parameter defaults', () => {
+    it('CAS has default sharpness of 0.5', () => {
+      const cas = AVAILABLE_EFFECTS.find(e => e.className === 'CAS')!;
+      expect(cas.params).toBeDefined();
+      expect(cas.params!.sharpness).toBe(0.5);
+    });
+
+    it('Debanding has default strength of 0.5 and bandThreshold of 0.08', () => {
+      const debanding = AVAILABLE_EFFECTS.find(e => e.className === 'Debanding')!;
+      expect(debanding.params).toBeDefined();
+      expect(debanding.params!.strength).toBe(0.5);
+      expect(debanding.params!.bandThreshold).toBe(0.08);
+    });
+
+    it('DoG has default strength of 4', () => {
+      const dog = AVAILABLE_EFFECTS.find(e => e.className === 'DoG')!;
+      expect(dog.params).toBeDefined();
+      expect(dog.params!.strength).toBe(4);
+    });
+
+    it('BilateralMean has default strength of 0.2 and strength2 of 2', () => {
+      const bm = AVAILABLE_EFFECTS.find(e => e.className === 'BilateralMean')!;
+      expect(bm.params).toBeDefined();
+      expect(bm.params!.strength).toBe(0.2);
+      expect(bm.params!.strength2).toBe(2);
+    });
+  });
+});
