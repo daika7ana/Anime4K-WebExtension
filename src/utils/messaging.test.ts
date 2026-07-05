@@ -150,6 +150,20 @@ describe('onMessage', () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
+  it('forwards TOGGLE_ENHANCEMENT message to handler', () => {
+    const handler = vi.fn();
+    onMessage(handler);
+
+    const listener = vi.mocked(chrome.runtime.onMessage.addListener).mock.calls[0]![0]!;
+    const msg: RuntimeMessage = { type: 'TOGGLE_ENHANCEMENT' };
+    const sender: chrome.runtime.MessageSender = {};
+    const sendResponse = vi.fn();
+
+    listener(msg, sender, sendResponse);
+
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
   it('ignores unknown message types (returns false, handler not called)', () => {
     const handler = vi.fn();
     onMessage(handler);

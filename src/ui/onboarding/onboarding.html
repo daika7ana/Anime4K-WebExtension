@@ -15,6 +15,22 @@
             <p data-i18n="welcomeDesc">Let's optimize your settings for the best experience.</p>
         </div>
 
+        <!-- WebGPU unsupported screen (hidden by default) -->
+        <div class="unsupported-screen" id="unsupported-screen" style="display: none;">
+            <div class="unsupported-icon">⚠️</div>
+            <h2 data-i18n="unsupportedTitle">WebGPU Not Supported</h2>
+            <p data-i18n="unsupportedDesc">Your browser doesn't support WebGPU, which is required for video enhancement.</p>
+            <div class="unsupported-browsers">
+                <h3 data-i18n="supportedBrowsers">Supported Browsers:</h3>
+                <ul>
+                    <li data-i18n="supportedChrome">Google Chrome 113+</li>
+                    <li data-i18n="supportedEdge">Microsoft Edge 113+</li>
+                    <li data-i18n="supportedFirefox">Firefox (enable WebGPU in about:config)</li>
+                </ul>
+            </div>
+            <p class="unsupported-note" data-i18n="unsupportedFirefoxNote">Firefox users: Enable "dom.webgpu.enabled" in about:config and restart the browser.</p>
+        </div>
+
         <!-- Step indicator -->
         <div class="step-indicator">
             <div class="step active" data-step="1">1</div>

@@ -22,6 +22,7 @@ export class Renderer {
   private targetDimensions: Dimensions;
   private onError?: (error: Error) => void;
   private onFirstFrameRendered?: () => void;
+  private onFrameRendered?: (frameTime: number) => void;
   private onProgress?: (stage: string | null, current?: number, total?: number) => void;
 
   // --- State flags ---
@@ -49,6 +50,8 @@ export class Renderer {
   private drmCtx: OffscreenCanvasRenderingContext2D | null = null;
   /** Whether the DRM canvas fallback has produced a valid (non-black) frame */
   private drmFrameValidated = false;
+  /** Visibility change listener to pause/resume rendering based on tab visibility */
+  private onVisibilityChange: (() => void) | null = null;
 
   // --- WebGPU objects ---
   private device!: GPUDevice;
@@ -78,6 +81,7 @@ export class Renderer {
     this.targetDimensions = options.targetDimensions;
     this.onError = options.onError;
     this.onFirstFrameRendered = options.onFirstFrameRendered;
+    this.onFrameRendered = options.onFrameRendered;
     this.onProgress = options.onProgress;
   }
 
@@ -157,6 +161,16 @@ export class Renderer {
 
       // Start render loop: attempt to render the first frame and begin continuous rendering
       this.renderFirstFrameAndStartLoop();
+
+      // Listen for visibility changes to pause/resume rendering based on tab visibility
+      this.onVisibilityChange = () => {
+        if (!this.destroyed && document.visibilityState === 'visible' && this.animationFrameId !== null) {
+          // Cancel the pending callback and request an immediate one to resume faster
+          this.video.cancelVideoFrameCallback(this.animationFrameId);
+          this.animationFrameId = this.video.requestVideoFrameCallback(this.renderLoop);
+        }
+      };
+      document.addEventListener('visibilitychange', this.onVisibilityChange);
     } catch (error) {
       if (error instanceof RendererInitializationError) {
         throw error;
@@ -316,8 +330,11 @@ export class Renderer {
     if (this.isRecovering) return false;
     if (this.rebuilding) return false; // Skip frames during pipeline rebuild
     if (this.resizing) return false; // Skip frames during resize
+    if (document.visibilityState === 'hidden') return false; // Skip frames when tab is hidden
 
     try {
+      const frameStartTime = performance.now();
+
       if (this.video.readyState < this.video.HAVE_CURRENT_DATA) {
         return false; // Video not ready, skip this frame
       }
@@ -419,6 +436,8 @@ export class Renderer {
       passEncoder.end();
       this.device.queue.submit([commandEncoder.finish()]);
 
+      const frameTime = performance.now() - frameStartTime;
+      this.onFrameRendered?.(frameTime);
       return true; // Successfully rendered
 
     } catch (error) {
@@ -683,6 +702,12 @@ export class Renderer {
     if (this.destroyed) return;
     // Immediately set the destroy flag to prevent any async operations (e.g., device.lost) from performing unnecessary actions during destruction
     this.destroyed = true;
+
+    // Remove the visibility change listener
+    if (this.onVisibilityChange) {
+      document.removeEventListener('visibilitychange', this.onVisibilityChange);
+      this.onVisibilityChange = null;
+    }
 
     // Stop the render loop
     if (this.animationFrameId) {

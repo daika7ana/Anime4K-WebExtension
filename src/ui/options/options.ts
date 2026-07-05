@@ -27,6 +27,7 @@ const addRuleBtn = document.getElementById('add-rule') as HTMLButtonElement;
 const importBtn = document.getElementById('import-btn') as HTMLButtonElement;
 const exportBtn = document.getElementById('export-btn') as HTMLButtonElement;
 const crossOriginFixToggle = document.getElementById('cross-origin-fix-toggle') as HTMLInputElement;
+const autoEnableToggle = document.getElementById('auto-enable-toggle') as HTMLInputElement;
 const colorGradingToggle = document.getElementById('color-grading-toggle') as HTMLInputElement;
 const colorGradingSliders = document.getElementById('color-grading-sliders') as HTMLElement;
 const themeSelect = document.getElementById('theme-select') as HTMLSelectElement;
@@ -35,6 +36,8 @@ const versionNumberSpan = document.getElementById('version-number') as HTMLSpanE
 // --- Smart Features UI Elements ---
 const runBenchmarkBtn = document.getElementById('run-benchmark-btn') as HTMLButtonElement;
 const tierSelect = document.getElementById('tier-select') as HTMLSelectElement;
+const enableHotkeyToggle = document.getElementById('enable-hotkey-toggle') as HTMLInputElement;
+const diagnosticsToggle = document.getElementById('diagnostics-toggle') as HTMLInputElement;
 
 // --- AppContext: shared state + callbacks for all panels ---
 const ctx: AppContext = {
@@ -72,7 +75,7 @@ const setupInternationalization = () => {
 
 // --- Initialize panels (bind DOM + events; returns render handles) ---
 const modesPanel = initModesPanel(ctx, modesContainer, addModeBtn, exportModesBtn, importModesBtn);
-const whitelistPanel = initWhitelistPanel(ctx, rulesContainer, addRuleBtn, exportBtn, importBtn);
+const whitelistPanel = initWhitelistPanel(ctx, rulesContainer, addRuleBtn, exportBtn, importBtn, autoEnableToggle);
 
 // onTierChanged is called when the tier changes (manual select or benchmark apply).
 // It syncs the tier-select display AND re-renders mode chains (which depend on tier).
@@ -91,6 +94,8 @@ const generalPanel = initGeneralPanel(
   colorGradingToggle,
   colorGradingSliders,
   versionNumberSpan,
+  enableHotkeyToggle,
+  diagnosticsToggle,
 );
 
 // --- Cross-context message listener ---
@@ -143,5 +148,5 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Initial UI rendering from state
   modesPanel.render();
   whitelistPanel.render();
-  generalPanel.render();
+  await generalPanel.render();
 });

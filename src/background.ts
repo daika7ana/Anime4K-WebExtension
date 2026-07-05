@@ -95,6 +95,24 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
+// Listen for keyboard shortcut commands
+chrome.commands.onCommand.addListener(async (command) => {
+  if (command === 'toggle-enhancement') {
+    // Check if hotkey is enabled in settings
+    const settings = await getSettings();
+    if (!settings.enableHotkey) return;
+
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const activeTab = tabs[0];
+      if (activeTab?.id) {
+        sendTabMessage(activeTab.id, { type: 'TOGGLE_ENHANCEMENT' }).catch(() => {
+          // Tab may not have a content script — ignore silently
+        });
+      }
+    });
+  }
+});
+
 // Listen for requests from content scripts/popup/options
 onMessage((message, _sender, _sendResponse) => {
   switch (message.type) {

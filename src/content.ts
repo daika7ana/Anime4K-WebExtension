@@ -3,6 +3,7 @@
  * Responsible for adding enhancement buttons to page video elements and managing enhancer instances
  */
 import { initializeOnPage, deinitializeOnPage, handleSettingsUpdate } from '@core/video/video-manager';
+import { getAllManagedVideos, getEnhancer } from '@core/video/enhancer-map';
 import { isUrlWhitelisted, getWhitelistRules } from '@utils/whitelist';
 import { onMessage } from '@utils/messaging';
 
@@ -69,6 +70,40 @@ async function evaluateAndApplyWhitelistState() {
 // Initialize the page
 evaluateAndApplyWhitelistState();
 
+/**
+ * Find the largest visible managed video in the current viewport.
+ * Returns null if no managed video is visible.
+ */
+function findPrimaryVideo(): HTMLVideoElement | null {
+  const videos = getAllManagedVideos();
+  if (videos.length === 0) return null;
+
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+
+  let bestVideo: HTMLVideoElement | null = null;
+  let bestArea = 0;
+
+  for (const video of videos) {
+    const rect = video.getBoundingClientRect();
+    // Check if video is visible (has dimensions and intersects viewport)
+    if (rect.width === 0 || rect.height === 0) continue;
+    if (rect.bottom < 0 || rect.top > viewportHeight || rect.right < 0 || rect.left > viewportWidth) continue;
+
+    // Calculate visible area
+    const visibleWidth = Math.min(rect.width, viewportWidth - Math.max(0, rect.left));
+    const visibleHeight = Math.min(rect.height, viewportHeight - Math.max(0, rect.top));
+    const area = visibleWidth * visibleHeight;
+
+    if (area > bestArea) {
+      bestArea = area;
+      bestVideo = video;
+    }
+  }
+
+  return bestVideo;
+}
+
 // Listen for settings update messages from the background script
 onMessage((message, _sender, sendResponse) => {
   switch (message.type) {
@@ -78,6 +113,18 @@ onMessage((message, _sender, sendResponse) => {
     case 'URL_UPDATED':
       console.log('[Anime4KWebExt] URL changed, re-evaluating whitelist...');
       evaluateAndApplyWhitelistState();
+      return false;
+    case 'TOGGLE_ENHANCEMENT':
+      {
+        const video = findPrimaryVideo();
+        if (video) {
+          const enhancer = getEnhancer(video);
+          if (enhancer) {
+            // Fire-and-forget: don't block the message channel
+            enhancer.toggleEnhancement();
+          }
+        }
+      }
       return false;
   }
 });

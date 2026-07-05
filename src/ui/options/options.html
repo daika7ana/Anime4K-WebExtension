@@ -5,6 +5,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title data-i18n="optionsTitle">Extension Options</title>
+  <style>
+    .settings-link {
+      color: var(--primary);
+      text-decoration: none;
+    }
+    .settings-link:hover {
+      text-decoration: underline;
+    }
+  </style>
 </head>
 
 <body>
@@ -146,6 +155,57 @@
 
         <div class="card">
           <div class="card-header">
+            <h2 class="card-title" data-i18n="hotkeys">Hotkeys</h2>
+          </div>
+          <div class="setting-item">
+            <div class="setting-label">
+              <label for="enable-hotkey-toggle" data-i18n="enableHotkey">Enable Toggle Enhancement Shortcut</label>
+              <p class="setting-description" data-i18n="enableHotkeyDesc">Enable the keyboard shortcut to toggle video enhancement on the active video.</p>
+            </div>
+            <div class="setting-control">
+              <label class="switch">
+                <input type="checkbox" id="enable-hotkey-toggle">
+                <span class="slider round"></span>
+              </label>
+            </div>
+          </div>
+          <div class="setting-item">
+            <div class="setting-label">
+              <label data-i18n="hotkeyShortcut">Current Shortcut</label>
+              <p class="setting-description">
+                <span data-i18n="hotkeyChangeInstructions">To change this Hotkey, go to</span>
+                <a href="#" id="open-chrome-shortcuts" class="settings-link">chrome://extensions/shortcuts</a>
+                <span data-i18n="hotkeyChangeInstructionsMid">in Chrome or</span>
+                <a href="#" id="open-firefox-addons" class="settings-link">about:addons</a>
+                <span data-i18n="hotkeyChangeInstructionsPost">in Firefox.</span>
+              </p>
+            </div>
+            <div class="setting-control">
+              <kbd id="hotkey-display" class="hotkey-display">Alt+Shift+E</kbd>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title" data-i18n="diagnostics">Diagnostics</h2>
+          </div>
+          <div class="setting-item">
+            <div class="setting-label">
+              <label for="diagnostics-toggle" data-i18n="showDiagnostics">Show Diagnostics</label>
+              <p class="setting-description" data-i18n="showDiagnosticsDesc">Display a performance overlay with FPS, frame time, and GPU info during enhancement.</p>
+            </div>
+            <div class="setting-control">
+              <label class="switch">
+                <input type="checkbox" id="diagnostics-toggle">
+                <span class="slider round"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
             <h2 class="card-title" data-i18n="performanceSettings">Performance Settings</h2>
           </div>
 
@@ -232,6 +292,23 @@
           <div>
             <h1 data-i18n="whitelistManagement">Whitelist Management</h1>
             <p style="margin: 4px 0 0; color: var(--on-surface-variant); font-size: 14px;">Control which sites and pages are allowed to use video enhancement.</p>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title" data-i18n="autoEnableOnWhitelist">Auto-enable on Whitelisted Sites</h2>
+          </div>
+          <div class="setting-item">
+            <div class="setting-label">
+              <label for="auto-enable-toggle" data-i18n="autoEnableOnWhitelist">Auto-enable on Whitelisted Sites</label>
+              <p class="setting-description" data-i18n="autoEnableOnWhitelistDesc">Automatically enhance videos on whitelisted sites without clicking the Enhance button.</p>
+            </div>
+            <div class="setting-control">
+              <label class="switch">
+                <input type="checkbox" id="auto-enable-toggle">
+                <span class="slider round"></span>
+              </label>
+            </div>
           </div>
         </div>
         <div class="card">

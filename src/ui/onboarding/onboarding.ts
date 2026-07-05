@@ -26,6 +26,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Apply internationalization
     applyI18n();
 
+    // Check WebGPU support before proceeding
+    if (!navigator.gpu) {
+        showUnsupportedScreen();
+        return;
+    }
+
     // Get elements
     const startTestBtn = document.getElementById('start-test') as HTMLButtonElement;
     const skipTestBtn = document.getElementById('skip-test') as HTMLButtonElement;
@@ -127,6 +133,25 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.close();
     });
 });
+
+function showUnsupportedScreen(): void {
+    // Hide step indicator and all step content
+    const stepIndicator = document.querySelector('.step-indicator') as HTMLElement;
+    if (stepIndicator) {
+        stepIndicator.style.display = 'none';
+    }
+    document.querySelectorAll('.step-content').forEach(el => {
+        (el as HTMLElement).style.display = 'none';
+    });
+
+    // Show unsupported screen
+    const unsupportedScreen = document.getElementById('unsupported-screen');
+    if (unsupportedScreen) {
+        unsupportedScreen.style.display = 'block';
+        // Apply i18n to the newly visible content
+        applyI18n(unsupportedScreen);
+    }
+}
 
 function goToStep(step: number): void {
     // Update step indicators

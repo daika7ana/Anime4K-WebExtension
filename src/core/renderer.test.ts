@@ -131,6 +131,7 @@ describe('Renderer', () => {
       targetDimensions: (overrides.targetDimensions as Dimensions) ?? DEFAULT_DIMENSIONS,
       onError: overrides.onError as ((error: Error) => void) | undefined,
       onFirstFrameRendered: overrides.onFirstFrameRendered as (() => void) | undefined,
+      onFrameRendered: overrides.onFrameRendered as ((frameTime: number) => void) | undefined,
       onProgress: overrides.onProgress as ((stage: string | null, current?: number, total?: number) => void) | undefined,
     });
     await Promise.resolve();
@@ -335,6 +336,99 @@ describe('Renderer', () => {
       mockBuildEffectPipelines.mockClear();
       await r.updateConfiguration({ effects: [], targetDimensions: DEFAULT_DIMENSIONS });
       expect(mockBuildEffectPipelines).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('visibility pause', () => {
+    beforeEach(() => {
+      // Ensure visibilityState starts as 'visible' before each test
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true, writable: true });
+    });
+
+    afterEach(() => {
+      // Restore visibilityState to 'visible' after each test
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true, writable: true });
+    });
+
+    it('does not submit GPU commands when tab is hidden', async () => {
+      // Set hidden before creating renderer so first frame is also skipped
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true, writable: true });
+      const r = await createRenderer();
+      const submitSpy = mock.device.queue.submit as ReturnType<typeof vi.fn>;
+      expect(submitSpy).not.toHaveBeenCalled();
+      r.destroy();
+    });
+
+    it('resumes rendering when tab becomes visible', async () => {
+      // Start hidden — no GPU commands
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true, writable: true });
+      const r = await createRenderer();
+      const submitSpy = mock.device.queue.submit as ReturnType<typeof vi.fn>;
+      expect(submitSpy).not.toHaveBeenCalled();
+
+      const rvfc = video.requestVideoFrameCallback as ReturnType<typeof vi.fn>;
+      rvfc.mockClear();
+
+      // Simulate tab becoming visible
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true, writable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+
+      // The visibilitychange handler should cancel the pending callback and request an immediate one
+      const cvfc = video.cancelVideoFrameCallback as ReturnType<typeof vi.fn>;
+      expect(cvfc).toHaveBeenCalled();
+      expect(rvfc).toHaveBeenCalled();
+      r.destroy();
+    });
+
+    it('removes visibilitychange listener on destroy', async () => {
+      const r = await createRenderer();
+      r.destroy();
+
+      // After destroy, dispatching visibilitychange should not throw or cause errors
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true, writable: true });
+      expect(() => document.dispatchEvent(new Event('visibilitychange'))).not.toThrow();
+    });
+  });
+
+  describe('onFrameRendered callback', () => {
+    it('calls onFrameRendered after successful frame with frame time', async () => {
+      const onFrameRendered = vi.fn();
+      const r = await createRenderer({ onFrameRendered });
+
+      expect(onFrameRendered).toHaveBeenCalledTimes(1);
+      const frameTime = onFrameRendered.mock.calls[0][0];
+      expect(typeof frameTime).toBe('number');
+      expect(frameTime).toBeGreaterThanOrEqual(0);
+
+      r.destroy();
+    });
+
+    it('does not call onFrameRendered when frame is skipped (visibility hidden)', async () => {
+      const onFrameRendered = vi.fn();
+      // Set visibilityState to hidden so processFrame() skips rendering
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true, writable: true });
+
+      const r = await Renderer.create({
+        video: createMockVideo({ readyState: HAVE_ENOUGH_DATA }),
+        canvas,
+        effects: DEFAULT_EFFECTS,
+        targetDimensions: DEFAULT_DIMENSIONS,
+        onFrameRendered,
+      });
+      await Promise.resolve();
+
+      // The first frame should be skipped because visibilityState is hidden
+      expect(onFrameRendered).not.toHaveBeenCalled();
+
+      // Restore visibility
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true, writable: true });
+      r.destroy();
+    });
+
+    it('onFrameRendered is optional — no error when not provided', async () => {
+      const r = await createRenderer(); // no onFrameRendered
+      // Should not throw
+      expect(() => r.destroy()).not.toThrow();
     });
   });
 });

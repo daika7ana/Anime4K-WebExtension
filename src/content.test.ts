@@ -2,12 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // vi.hoisted ensures these are available when vi.mock factories execute
 const { mockInitializeOnPage, mockDeinitializeOnPage, mockHandleSettingsUpdate,
-        mockIsUrlWhitelisted, mockGetWhitelistRules } = vi.hoisted(() => ({
+        mockIsUrlWhitelisted, mockGetWhitelistRules,
+        mockGetAllManagedVideos, mockGetEnhancer } = vi.hoisted(() => ({
   mockInitializeOnPage: vi.fn(),
   mockDeinitializeOnPage: vi.fn(),
   mockHandleSettingsUpdate: vi.fn(),
   mockIsUrlWhitelisted: vi.fn().mockReturnValue(false),
   mockGetWhitelistRules: vi.fn().mockResolvedValue([]),
+  mockGetAllManagedVideos: vi.fn().mockReturnValue([]),
+  mockGetEnhancer: vi.fn().mockReturnValue(undefined),
 }));
 
 vi.mock('@core/video/video-manager', () => ({
@@ -19,6 +22,11 @@ vi.mock('@core/video/video-manager', () => ({
 vi.mock('@utils/whitelist', () => ({
   isUrlWhitelisted: mockIsUrlWhitelisted,
   getWhitelistRules: mockGetWhitelistRules,
+}));
+
+vi.mock('@core/video/enhancer-map', () => ({
+  getAllManagedVideos: mockGetAllManagedVideos,
+  getEnhancer: mockGetEnhancer,
 }));
 
 describe('content.ts', () => {
@@ -144,6 +152,51 @@ describe('content.ts', () => {
       const result = messageListener({ type: 'UNKNOWN_TYPE' }, {}, vi.fn());
 
       expect(result).toBe(false);
+    });
+
+    it('TOGGLE_ENHANCEMENT calls toggleEnhancement on the enhancer of the primary video', async () => {
+      await loadContentScript();
+
+      const mockToggleEnhancement = vi.fn();
+      const mockVideo = document.createElement('video');
+      // Mock bounding rect so findPrimaryVideo considers it visible
+      vi.spyOn(mockVideo, 'getBoundingClientRect').mockReturnValue(
+        new DOMRect(0, 0, 640, 360)
+      );
+      const mockEnhancer = { toggleEnhancement: mockToggleEnhancement };
+
+      mockGetAllManagedVideos.mockReturnValue([mockVideo]);
+      mockGetEnhancer.mockReturnValue(mockEnhancer);
+
+      messageListener({ type: 'TOGGLE_ENHANCEMENT' }, {}, vi.fn());
+
+      expect(mockToggleEnhancement).toHaveBeenCalledTimes(1);
+    });
+
+    it('TOGGLE_ENHANCEMENT is a no-op when no managed videos exist', async () => {
+      await loadContentScript();
+
+      const mockToggleEnhancement = vi.fn();
+
+      mockGetAllManagedVideos.mockReturnValue([]);
+
+      messageListener({ type: 'TOGGLE_ENHANCEMENT' }, {}, vi.fn());
+
+      expect(mockToggleEnhancement).not.toHaveBeenCalled();
+    });
+
+    it('TOGGLE_ENHANCEMENT is a no-op when enhancer is not found for primary video', async () => {
+      await loadContentScript();
+
+      const mockToggleEnhancement = vi.fn();
+      const mockVideo = document.createElement('video');
+
+      mockGetAllManagedVideos.mockReturnValue([mockVideo]);
+      mockGetEnhancer.mockReturnValue(undefined);
+
+      messageListener({ type: 'TOGGLE_ENHANCEMENT' }, {}, vi.fn());
+
+      expect(mockToggleEnhancement).not.toHaveBeenCalled();
     });
   });
 

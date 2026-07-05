@@ -12,6 +12,7 @@ const KNOWN_MESSAGE_TYPES: ReadonlySet<RuntimeMessage['type']> = new Set([
   'OPEN_OPTIONS_PAGE',
   'OPEN_ONBOARDING',
   'WHITELIST_UPDATED',
+  'TOGGLE_ENHANCEMENT',
 ]);
 
 /** Type guard: narrows `unknown` to `RuntimeMessage`. */

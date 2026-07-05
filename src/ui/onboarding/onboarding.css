@@ -293,3 +293,61 @@ body {
 .btn-secondary:hover {
     background: var(--surface-container-highest);
 }
+
+/* WebGPU Unsupported Screen */
+.unsupported-screen {
+    text-align: center;
+    animation: fadeIn 0.3s ease;
+}
+
+.unsupported-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+}
+
+.unsupported-screen h2 {
+    text-align: center;
+    margin: 0 0 16px 0;
+    font-size: 20px;
+}
+
+.unsupported-screen > p {
+    text-align: center;
+    color: var(--on-surface-variant);
+    margin-bottom: 24px;
+}
+
+.unsupported-browsers {
+    background: var(--surface-container-low);
+    border-radius: var(--border-radius-md);
+    padding: 16px;
+    margin-bottom: 24px;
+    text-align: left;
+}
+
+.unsupported-browsers h3 {
+    margin: 0 0 12px 0;
+    font-size: 16px;
+}
+
+.unsupported-browsers ul {
+    margin: 0;
+    padding-left: 20px;
+}
+
+.unsupported-browsers li {
+    margin-bottom: 8px;
+    font-size: 14px;
+    color: var(--on-surface-variant);
+}
+
+.unsupported-browsers li:last-child {
+    margin-bottom: 0;
+}
+
+.unsupported-note {
+    font-size: 13px;
+    color: var(--on-surface-variant);
+    opacity: 0.75;
+    margin-bottom: 24px;
+}

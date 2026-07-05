@@ -418,5 +418,65 @@
   },
   "vibranceDesc": {
     "message": "Избирательно усиливает менее насыщенные цвета, сохраняя уже яркие."
+  },
+  "supportedBrowsers": {
+    "message": "Поддерживаемые браузеры:"
+  },
+  "supportedChrome": {
+    "message": "Google Chrome 113+"
+  },
+  "supportedEdge": {
+    "message": "Microsoft Edge 113+"
+  },
+  "supportedFirefox": {
+    "message": "Firefox (включите WebGPU в about:config)"
+  },
+  "unsupportedDesc": {
+    "message": "Ваш браузер не поддерживает WebGPU, который необходим для улучшения видео."
+  },
+  "unsupportedFirefoxNote": {
+    "message": "Пользователи Firefox: включите «dom.webgpu.enabled» в about:config и перезапустите браузер."
+  },
+  "unsupportedTitle": {
+    "message": "WebGPU не поддерживается"
+  },
+  "toggleEnhancementDesc": {
+    "message": "Переключить улучшение видео на активном видео"
+  },
+  "autoEnableOnWhitelist": {
+    "message": "Авто-включение на сайтах из белого списка"
+  },
+  "autoEnableOnWhitelistDesc": {
+    "message": "Автоматически улучшать видео на сайтах из белого списка без нажатия кнопки Enhance."
+  },
+  "showDiagnostics": {
+    "message": "Показать диагностику"
+  },
+  "showDiagnosticsDesc": {
+    "message": "Отображать оверлей производительности с FPS, временем кадра и информацией о GPU во время улучшения."
+  },
+  "hotkeys": {
+    "message": "Горячие клавиши"
+  },
+  "enableHotkey": {
+    "message": "Включить горячую клавишу для переключения улучшения"
+  },
+  "enableHotkeyDesc": {
+    "message": "Включить горячую клавишу для переключения улучшения видео на активном видео."
+  },
+  "hotkeyShortcut": {
+    "message": "Текущая горячая клавиша"
+  },
+  "hotkeyChangeInstructions": {
+    "message": "Чтобы изменить эту горячую клавишу, откройте"
+  },
+  "hotkeyChangeInstructionsMid": {
+    "message": "в Chrome или"
+  },
+  "hotkeyChangeInstructionsPost": {
+    "message": "в Firefox."
+  },
+  "diagnostics": {
+    "message": "Диагностика"
   }
 }

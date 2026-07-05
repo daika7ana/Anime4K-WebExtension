@@ -418,5 +418,65 @@
   },
   "vibranceDesc": {
     "message": "Selectively boosts less-saturated colors while preserving already vivid ones."
+  },
+  "supportedBrowsers": {
+    "message": "Supported Browsers:"
+  },
+  "supportedChrome": {
+    "message": "Google Chrome 113+"
+  },
+  "supportedEdge": {
+    "message": "Microsoft Edge 113+"
+  },
+  "supportedFirefox": {
+    "message": "Firefox (enable WebGPU in about:config)"
+  },
+  "unsupportedDesc": {
+    "message": "Your browser doesn't support WebGPU, which is required for video enhancement."
+  },
+  "unsupportedFirefoxNote": {
+    "message": "Firefox users: Enable \"dom.webgpu.enabled\" in about:config and restart the browser."
+  },
+  "unsupportedTitle": {
+    "message": "WebGPU Not Supported"
+  },
+  "toggleEnhancementDesc": {
+    "message": "Toggle video enhancement on the active video"
+  },
+  "autoEnableOnWhitelist": {
+    "message": "Auto-enable on Whitelisted Sites"
+  },
+  "autoEnableOnWhitelistDesc": {
+    "message": "Automatically enhance videos on whitelisted sites without clicking the Enhance button."
+  },
+  "showDiagnostics": {
+    "message": "Show Diagnostics"
+  },
+  "showDiagnosticsDesc": {
+    "message": "Display a performance overlay with FPS, frame time, and GPU info during enhancement."
+  },
+  "hotkeys": {
+    "message": "Hotkeys"
+  },
+  "enableHotkey": {
+    "message": "Enable Toggle Enhancement Hotkey"
+  },
+  "enableHotkeyDesc": {
+    "message": "Enable the keyboard hotkey to toggle video enhancement on the active video."
+  },
+  "hotkeyShortcut": {
+    "message": "Current Hotkey"
+  },
+  "hotkeyChangeInstructions": {
+    "message": "To change this Hotkey, go to"
+  },
+  "hotkeyChangeInstructionsMid": {
+    "message": "in Chrome or"
+  },
+  "hotkeyChangeInstructionsPost": {
+    "message": "in Firefox."
+  },
+  "diagnostics": {
+    "message": "Diagnostics"
   }
 }

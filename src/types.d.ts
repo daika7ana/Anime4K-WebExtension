@@ -151,6 +151,8 @@ interface SyncedSettings {
   whitelist: WhitelistRule[];
   customModes: CustomMode[];
   enableCrossOriginFix: boolean;
+  autoEnableOnWhitelist: boolean;
+  enableHotkey: boolean;
   colorGrading: ColorGradingSettings;
 }
 
@@ -160,6 +162,7 @@ interface LocalSettings {
   gpuBenchmarkResult: GPUBenchmarkResult | null;
 
   hasCompletedOnboarding: boolean;
+  showDiagnostics: boolean;
 }
 
 // ===== Runtime-merged Full Settings =====
@@ -191,7 +194,8 @@ type RuntimeMessage =
   | { type: 'URL_UPDATED'; url: string }
   | { type: 'OPEN_OPTIONS_PAGE' }
   | { type: 'OPEN_ONBOARDING' }
-  | { type: 'WHITELIST_UPDATED' };
+  | { type: 'WHITELIST_UPDATED' }
+  | { type: 'TOGGLE_ENHANCEMENT' };
 
 // ===== Renderer Options Interface =====
 interface RendererOptions {
@@ -207,6 +211,8 @@ interface RendererOptions {
   onError?: (error: Error) => void;
   /** Callback function invoked when the first frame is successfully rendered */
   onFirstFrameRendered?: () => void;
+  /** Callback invoked after each successfully rendered frame with the frame time in ms */
+  onFrameRendered?: (frameTime: number) => void;
   /** Initialization progress callback function */
   onProgress?: (stage: string | null, current?: number, total?: number) => void;
 }

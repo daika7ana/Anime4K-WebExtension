@@ -226,9 +226,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           sendTabMessage(tabs[0].id, { type: 'SETTINGS_UPDATED' })
             .catch((error: Error) => {
               if (!error.message.includes('Receiving end does not exist')) {
-                console.warn('Message send error:', error.message);
-              }
-            });
+    console.warn('Message send error:', error.message);
+            }
+          });
         }
       });
     } catch (error) {

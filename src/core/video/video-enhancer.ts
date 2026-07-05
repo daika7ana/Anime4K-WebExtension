@@ -1,10 +1,11 @@
-import { getSettings, getEffectsForMode } from '@utils/settings';
+import { getSettings, getEffectsForMode, getLocalSettings } from '@utils/settings';
 import { sendMessage } from '@utils/messaging';
 import { t } from '@utils/i18n';
 import { Renderer } from '@core/renderer';
 import { ANIME4K_APPLIED_ATTR } from '@/constants';
 import { Dimensions, Anime4KWebExtSettings, EnhancementMode, EnhancementEffect, ColorGradingSettings } from '@/types';
 import { OverlayManager } from '@core/ui/overlay-manager';
+import { DiagnosticsOverlay } from '@core/ui/diagnostics-overlay';
 import { yieldToAnimationFrame } from '@core/utils/yield-utils';
 
 /**
@@ -16,6 +17,8 @@ export class VideoEnhancer {
   private currentModeId: string | null = null;
   private overlay: OverlayManager;
   private button: HTMLButtonElement;
+  private diagnosticsOverlay: DiagnosticsOverlay | null = null;
+  private currentPipelineCount = 0;
 
   private constructor(private video: HTMLVideoElement) {
     this.overlay = OverlayManager.create(this.video);
@@ -215,6 +218,17 @@ export class VideoEnhancer {
     const baseEffects = getEffectsForMode(selectedMode, settings.performanceTier);
     const effects = this.getEffectsWithColorGrading(baseEffects, settings.colorGrading);
 
+    // Store pipeline count for diagnostics
+    this.currentPipelineCount = effects.length;
+
+    // Create diagnostics overlay if enabled in local settings
+    const localSettings = await getLocalSettings();
+    if (localSettings.showDiagnostics) {
+      const adapterInfo = await this.getAdapterInfo();
+      this.diagnosticsOverlay = DiagnosticsOverlay.create(this.video, adapterInfo);
+      this.diagnosticsOverlay.show();
+    }
+
     this.renderer = await Renderer.create({
       video: this.video,
       canvas: canvas,
@@ -245,6 +259,9 @@ export class VideoEnhancer {
         } else {
           this.button.innerText = stage;
         }
+      },
+      onFrameRendered: (frameTime: number) => {
+        this.diagnosticsOverlay?.update(frameTime, this.currentPipelineCount);
       },
     });
 
@@ -294,6 +311,20 @@ export class VideoEnhancer {
 
     this.currentModeId = selectedMode.id;
     console.log(`[Anime4KWebExt] Renderer updated to mode: ${selectedMode.name}`);
+
+    // Update pipeline count for diagnostics
+    this.currentPipelineCount = effects.length;
+
+    // Handle diagnostics overlay toggle
+    const localSettings = await getLocalSettings();
+    if (localSettings.showDiagnostics && !this.diagnosticsOverlay) {
+      const adapterInfo = await this.getAdapterInfo();
+      this.diagnosticsOverlay = DiagnosticsOverlay.create(this.video, adapterInfo);
+      this.diagnosticsOverlay.show();
+    } else if (!localSettings.showDiagnostics && this.diagnosticsOverlay) {
+      this.diagnosticsOverlay.destroy();
+      this.diagnosticsOverlay = null;
+    }
   }
 
   /**
@@ -426,6 +457,10 @@ export class VideoEnhancer {
   private disableEnhancement(): void {
     console.log('[Anime4KWebExt] disableEnhancement called. Current renderer:', this.renderer);
     console.log('[Anime4KWebExt] Video opacity before:', this.video.style.opacity);
+    if (this.diagnosticsOverlay) {
+      this.diagnosticsOverlay.destroy();
+      this.diagnosticsOverlay = null;
+    }
     this.releaseWebGPUResources();
     this.overlay.hideCanvas();
     console.log('[Anime4KWebExt] Video opacity after hideCanvas:', this.video.style.opacity);
@@ -433,6 +468,60 @@ export class VideoEnhancer {
     this.button.innerText = t('enhanceButton');
     this.currentModeId = null;
     console.log('[Anime4KWebExt] disableEnhancement completed.');
+  }
+
+  /**
+   * Gets GPU adapter info string for diagnostics display.
+   * Tries WebGPU adapter info first, then falls back to WebGL renderer info
+   * when WebGPU info is unavailable (common with anti-fingerprinting hardening).
+   */
+  private async getAdapterInfo(): Promise<string> {
+    // Try WebGPU adapter info first
+    try {
+      if (navigator.gpu) {
+        const adapter = await navigator.gpu.requestAdapter();
+        if (adapter) {
+          const gpuAdapter = adapter as unknown as {
+            requestAdapterInfo?: () => Promise<{ vendor: string; architecture: string; device: string; description: string }>
+          };
+          if (gpuAdapter.requestAdapterInfo) {
+            const info = await gpuAdapter.requestAdapterInfo();
+            const parts = [info.vendor, info.architecture, info.device]
+              .filter(Boolean)
+              .filter(s => s.length > 0);
+            if (parts.length > 0) {
+              return parts.join(' ');
+            }
+          }
+        }
+      }
+    } catch {
+      // Fall through to WebGL fallback
+    }
+
+    // Fallback: WebGL debug renderer info
+    try {
+      const canvas = document.createElement('canvas');
+      const gl = (canvas.getContext('webgl2') || canvas.getContext('webgl')) as WebGLRenderingContext | null;
+      if (gl) {
+        const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+        if (debugInfo) {
+          const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+          if (renderer && typeof renderer === 'string' && renderer.length > 0) {
+            return renderer;
+          }
+        }
+        // Last resort: standard RENDERER parameter
+        const renderer = gl.getParameter(gl.RENDERER);
+        if (renderer && typeof renderer === 'string' && renderer.length > 0 && renderer !== 'WebKit WebGL') {
+          return renderer;
+        }
+      }
+    } catch {
+      // Fall through to default
+    }
+
+    return 'Unknown GPU';
   }
 
   /**
