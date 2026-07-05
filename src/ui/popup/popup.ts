@@ -1,9 +1,13 @@
 // popup.ts
 import './popup.css';
 import '../common-vars.css';
+import '../common/toast.css';
+import { showToast } from '../common/toast';
 import { getSettings, saveSettings, getLocalSettings, saveLocalSettings, BUILTIN_MODES } from '../../utils/settings';
 import { addWhitelistRule, setDefaultWhitelist } from '../../utils/whitelist';
 import { themeManager } from '../theme-manager';
+import { sendTabMessage } from '@utils/messaging';
+import { t, applyI18n } from '@utils/i18n';
 import type { PerformanceTier, EnhancementMode, CustomMode } from '../../types';
 
 // Current tier state
@@ -14,7 +18,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   themeManager.getTheme(); // This will automatically apply the saved theme
 
   // Set document language
-  document.documentElement.setAttribute('lang', chrome.i18n.getMessage('@@ui_locale') || 'en');
+  document.documentElement.setAttribute('lang', t('@@ui_locale', 'en'));
 
   // Set version info
   const versionInfo = document.getElementById('version-info');
@@ -24,26 +28,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Apply internationalization
-  document.querySelectorAll<HTMLElement>('[data-i18n]').forEach(element => {
-    const key = element.getAttribute('data-i18n');
-    if (key) {
-      const message = chrome.i18n.getMessage(key);
-      if (message) {
-        element.textContent = message;
-      }
-    }
-  });
-
-  // Apply title internationalization
-  document.querySelectorAll<HTMLElement>('[data-i18n-title]').forEach(element => {
-    const key = element.getAttribute('data-i18n-title');
-    if (key) {
-      const message = chrome.i18n.getMessage(key);
-      if (message) {
-        element.setAttribute('title', message);
-      }
-    }
-  });
+  applyI18n();
 
   // Get DOM elements
   const tierButtons = document.querySelectorAll<HTMLButtonElement>('.tier-btn');
@@ -70,7 +55,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Built-in modes group
     const builtInGroup = document.createElement('optgroup');
-    builtInGroup.label = chrome.i18n.getMessage('builtInModes') || 'Built-in Modes';
+    builtInGroup.label = t('builtInModes', 'Built-in Modes');
     BUILTIN_MODES.forEach(mode => {
       const option = document.createElement('option');
       option.value = mode.id;
@@ -82,7 +67,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Custom modes group (if any)
     if (settings.customModes && settings.customModes.length > 0) {
       const customGroup = document.createElement('optgroup');
-      customGroup.label = chrome.i18n.getMessage('customModes') || 'Custom Modes';
+      customGroup.label = t('customModes', 'Custom Modes');
       settings.customModes.forEach(mode => {
         const option = document.createElement('option');
         option.value = mode.id;
@@ -231,24 +216,24 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Show save success status message
       const status = document.createElement('div');
       status.className = 'save-status';
-      status.textContent = chrome.i18n.getMessage('settingsSaved') || 'Settings saved!';
+      status.textContent = t('settingsSaved', 'Settings saved!');
       saveButton.parentElement?.appendChild(status);
 
       // Notify content script in the active tab that settings have been updated
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs[0]?.id) {
-          chrome.tabs.sendMessage(tabs[0].id, {
+          sendTabMessage(tabs[0].id, {
             type: 'SETTINGS_UPDATED',
             settings: {
               selectedModeId,
-              targetResolution: selectedResolution,
+              targetResolutionSetting: selectedResolution,
               performanceTier: currentTier,
             }
-          }, (response) => {
-            if (chrome.runtime.lastError) {
-              console.warn('Message send error:', chrome.runtime.lastError.message);
-            } else {
-              console.log('Content script response:', response);
+          }).then((response) => {
+            console.log('Content script response:', response);
+          }).catch((error: Error) => {
+            if (!error.message.includes('Receiving end does not exist')) {
+              console.warn('Message send error:', error.message);
             }
           });
         }
@@ -259,7 +244,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     } catch (error) {
       console.error('Error saving settings:', error);
-      alert('Failed to save settings');
+      showToast('Failed to save settings', 'error');
       // Re-enable button on error so user can retry
       updateSaveButtonState();
     }
@@ -286,11 +271,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Notify content script
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs[0]?.id) {
-          chrome.tabs.sendMessage(tabs[0].id, { type: 'SETTINGS_UPDATED' }, (_response) => {
-            if (chrome.runtime.lastError) {
-              console.warn('Message send error:', chrome.runtime.lastError.message);
-            }
-          });
+          sendTabMessage(tabs[0].id, { type: 'SETTINGS_UPDATED' })
+            .catch((error: Error) => {
+              if (!error.message.includes('Receiving end does not exist')) {
+                console.warn('Message send error:', error.message);
+              }
+            });
         }
       });
     } catch (error) {
@@ -306,11 +292,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         const url = new URL(tabs[0].url);
         const cleanUrl = url.hostname + url.pathname;
         await addWhitelistRule(cleanUrl);
-        alert(chrome.i18n.getMessage('pageAdded') || 'URL added to whitelist');
+        showToast(t('pageAdded', 'URL added to whitelist'), 'success');
       }
     } catch (error) {
       console.error('Error adding current URL:', error);
-      alert('Failed to add URL to whitelist');
+      showToast('Failed to add URL to whitelist', 'error');
     }
   });
 
@@ -320,11 +306,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (tabs.length > 0 && tabs[0].url) {
         const url = new URL(tabs[0].url);
         await addWhitelistRule(`${url.hostname}/*`);
-        alert(chrome.i18n.getMessage('domainAdded') || 'Domain added to whitelist');
+        showToast(t('domainAdded', 'Domain added to whitelist'), 'success');
       }
     } catch (error) {
       console.error('Error adding current domain:', error);
-      alert('Failed to add domain to whitelist');
+      showToast('Failed to add domain to whitelist', 'error');
     }
   });
 
@@ -336,11 +322,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         const pathParts = url.pathname.split('/').filter(p => p);
         const parentPath = pathParts.length > 1 ? pathParts.slice(0, -1).join('/') : '';
         await addWhitelistRule(`${url.hostname}/${parentPath}/*`);
-        alert(chrome.i18n.getMessage('parentPathAdded') || 'Parent path added to whitelist');
+        showToast(t('parentPathAdded', 'Parent path added to whitelist'), 'success');
       }
     } catch (error) {
       console.error('Error adding parent path:', error);
-      alert('Failed to add parent path to whitelist');
+      showToast('Failed to add parent path to whitelist', 'error');
     }
   });
 

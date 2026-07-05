@@ -183,6 +183,16 @@ interface BenchmarkProgress {
   error?: string;
 }
 
+// ===== Runtime Message Types (type-safe message passing) =====
+type SettingsUpdatePayload = Partial<SyncedSettings> & { performanceTier?: PerformanceTier };
+
+type RuntimeMessage =
+  | { type: 'SETTINGS_UPDATED'; settings?: SettingsUpdatePayload; modifiedModeId?: string }
+  | { type: 'URL_UPDATED'; url: string }
+  | { type: 'OPEN_OPTIONS_PAGE' }
+  | { type: 'OPEN_ONBOARDING' }
+  | { type: 'WHITELIST_UPDATED' };
+
 // ===== Renderer Options Interface =====
 interface RendererOptions {
   /** Video player element */
@@ -227,5 +237,7 @@ export {
   GPUAdapterInfo,
   GPUAdapterWithInfo,
   BenchmarkProgress,
+  SettingsUpdatePayload,
+  RuntimeMessage,
   RendererOptions,
 };

@@ -1,4 +1,6 @@
 import { getSettings, getEffectsForMode } from '@utils/settings';
+import { sendMessage } from '@utils/messaging';
+import { t } from '@utils/i18n';
 import { Renderer } from '@core/renderer';
 import { ANIME4K_APPLIED_ATTR } from '@/constants';
 import { Dimensions, Anime4KWebExtSettings, EnhancementMode, EnhancementEffect, ColorGradingSettings } from '@/types';
@@ -100,7 +102,7 @@ export class VideoEnhancer {
     if (this.initializing) return;
     this.initializing = true;
 
-    this.button.innerText = chrome.i18n.getMessage('enhancing');
+    this.button.innerText = t('enhancing');
     this.button.disabled = true;
     this.fixAttempted = false; // Reset the fix attempt flag
 
@@ -130,7 +132,7 @@ export class VideoEnhancer {
       // --- Core operation ---
       await this.initRenderer();
       this.video.setAttribute(ANIME4K_APPLIED_ATTR, 'true');
-      this.button.innerText = chrome.i18n.getMessage('cancelEnhance');
+      this.button.innerText = t('cancelEnhance');
 
     } catch (error) {
       const err = error as Error;
@@ -143,22 +145,22 @@ export class VideoEnhancer {
           await this.fixCrossOrigin();
           await this.initRenderer(); // Retry
           this.video.setAttribute(ANIME4K_APPLIED_ATTR, 'true');
-          this.button.innerText = chrome.i18n.getMessage('cancelEnhance');
+          this.button.innerText = t('cancelEnhance');
         } catch (retryError) {
           console.error('[Anime4KWebExt] Enhancer failed even after retry:', retryError);
           this.disableEnhancement();
-          this.showErrorModal((retryError as Error).message || chrome.i18n.getMessage('enhanceError'));
+          this.showErrorModal((retryError as Error).message || t('enhanceError'));
         }
       } else if (isCrossOriginError && !settings.enableCrossOriginFix) {
         // --- User prompt ---
         console.warn('[Anime4KWebExt] Cross-origin error detected, but fix is disabled. Prompting user.');
         this.disableEnhancement();
-        this.showErrorModal(chrome.i18n.getMessage('crossOriginHint') || 'Enhancement failed due to cross-origin restrictions. Please enable Compatibility Mode in the options.', true);
+          this.showErrorModal(t('crossOriginHint', 'Enhancement failed due to cross-origin restrictions. Please enable Compatibility Mode in the options.'), true);
       } else {
         // --- Other errors ---
         console.error('[Anime4KWebExt] Failed to initialize enhancer:', err);
         this.disableEnhancement();
-        this.showErrorModal(err.message || chrome.i18n.getMessage('enhanceError'));
+        this.showErrorModal(err.message || t('enhanceError'));
       }
     } finally {
       this.initializing = false;
@@ -178,7 +180,7 @@ export class VideoEnhancer {
 
     // Ensure metadata is loaded before initializing the renderer
     if (this.video.readyState < 1) { // HAVE_METADATA
-      this.button.innerText = chrome.i18n.getMessage('waitingVideoLoad') || '⏳ Waiting for video...';
+      this.button.innerText = t('waitingVideoLoad', '⏳ Waiting for video...');
       await new Promise(resolve => {
         this.video.addEventListener('loadedmetadata', resolve, { once: true });
       });
@@ -227,9 +229,9 @@ export class VideoEnhancer {
         if (isDrmError) {
           this.showErrorModal('This video uses DRM copy protection. Video enhancement is not supported for DRM-protected content.');
         } else if (isCrossOriginError && !settings.enableCrossOriginFix) {
-          this.showErrorModal(chrome.i18n.getMessage('crossOriginHint') || 'Enhancement failed due to cross-origin restrictions. Please enable Compatibility Mode in the options.', true);
+        this.showErrorModal(t('crossOriginHint', 'Enhancement failed due to cross-origin restrictions. Please enable Compatibility Mode in the options.'), true);
         } else {
-          this.showErrorModal(chrome.i18n.getMessage('renderError') || 'A rendering error occurred.');
+          this.showErrorModal(t('renderError', 'A rendering error occurred.'));
         }
         this.disableEnhancement();
       },
@@ -239,7 +241,7 @@ export class VideoEnhancer {
       onProgress: (stage: string | null) => {
         if (stage === null) {
           // Warmup complete, restore button text
-          this.button.innerText = chrome.i18n.getMessage('cancelEnhance');
+          this.button.innerText = t('cancelEnhance');
         } else {
           this.button.innerText = stage;
         }
@@ -428,7 +430,7 @@ export class VideoEnhancer {
     this.overlay.hideCanvas();
     console.log('[Anime4KWebExt] Video opacity after hideCanvas:', this.video.style.opacity);
     this.video.removeAttribute(ANIME4K_APPLIED_ATTR);
-    this.button.innerText = chrome.i18n.getMessage('enhanceButton');
+    this.button.innerText = t('enhanceButton');
     this.currentModeId = null;
     console.log('[Anime4KWebExt] disableEnhancement completed.');
   }
@@ -484,14 +486,14 @@ export class VideoEnhancer {
 
     if (showOptionsLink) {
       const link = document.createElement('a');
-      link.textContent = chrome.i18n.getMessage('goToOptions') || 'Go to Options';
+      link.textContent = t('goToOptions', 'Go to Options');
       link.href = '#';
       link.style.color = '#8ab4f8';
       link.style.marginTop = '8px';
       link.style.display = 'block';
       link.onclick = (e) => {
         e.preventDefault();
-        chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS_PAGE' });
+        sendMessage({ type: 'OPEN_OPTIONS_PAGE' });
       };
       notification.appendChild(link);
     }

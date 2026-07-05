@@ -261,10 +261,10 @@ function setupLightweightVideoDetection(): MutationObserver {
  * @param sendResponse The response callback function
  */
 export async function handleSettingsUpdate(
-  message: { type: string, modifiedModeId?: string },
+  modifiedModeId: string | undefined,
   sendResponse: (response?: { status: string; message: string }) => void
 ): Promise<void> {
-  console.log('Received settings update:', message);
+  console.log('Received settings update, modifiedModeId:', modifiedModeId);
 
   const newSettings = await getSettings();
   const videos = EnhancerMap.getAllManagedVideos();
@@ -276,9 +276,9 @@ export async function handleSettingsUpdate(
   for (const videoElement of videos) {
     const enhancer = EnhancerMap.getEnhancer(videoElement);
     if (enhancer && videoElement.getAttribute(ANIME4K_APPLIED_ATTR) === 'true') {
-      if (message.modifiedModeId) {
+      if (modifiedModeId) {
         // Options page edit: only update videos using the modified mode (hot-swap)
-        if (enhancer.getCurrentModeId() === message.modifiedModeId) {
+        if (enhancer.getCurrentModeId() === modifiedModeId) {
           updatePromises.push(
             enhancer.updateSettings(newSettings).then(() => { updatedCount++; })
           );

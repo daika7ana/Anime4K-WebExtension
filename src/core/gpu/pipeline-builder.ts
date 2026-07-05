@@ -12,6 +12,7 @@ import type { Dimensions, EnhancementEffect, CustomEffectDescriptor, Destroyable
 import { CAS } from '@core/effects/cas';
 import { ColorAdjust } from '@core/effects/color-adjust';
 import { Debanding } from '@core/effects/debanding';
+import { t } from '@utils/i18n';
 import { yieldToMain } from '@core/utils/yield-utils';
 import { PipelinePreWarmer } from './pipeline-prewarmer';
 
@@ -139,7 +140,7 @@ export async function buildEffectPipelines(params: BuildPipelinesParams): Promis
   // The real pipeline construction in Phase 1 will then hit the cache (~1-3ms instead of ~25ms).
   // On subsequent calls (same effect chain), the pre-warmer skips via in-memory deduplication,
   // and the driver cache makes Phase 1 fast regardless.
-  onProgress?.(chrome.i18n.getMessage('warmupShadersProgress') || '⏳ Compiling shaders...');
+  onProgress?.(t('warmupShadersProgress', '⏳ Compiling shaders...'));
   try {
     await pipelinePreWarmer.warm(device, effects, (className, dev, tex) => {
       const custom = CUSTOM_EFFECTS[className];
@@ -172,8 +173,7 @@ export async function buildEffectPipelines(params: BuildPipelinesParams): Promis
   // so we yield the main thread after each pipeline creation to keep the UI responsive.
   for (let i = 0; i < effects.length; i++) {
     // Report progress
-    const loadingMsg = chrome.i18n.getMessage('loadingEffect', [String(i + 1), String(effects.length)])
-      || `⏳ Loading effect ${i + 1}/${effects.length}...`;
+    const loadingMsg = t('loadingEffect', `⏳ Loading effect ${i + 1}/${effects.length}...`, [String(i + 1), String(effects.length)]);
     onProgress?.(loadingMsg, i + 1, effects.length);
 
     const effect = effects[i];

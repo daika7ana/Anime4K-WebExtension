@@ -1,5 +1,6 @@
 import type { Dimensions, EnhancementEffect, RendererOptions, DestroyablePipeline } from '@/types';
 import { RendererInitializationError, RendererRuntimeError } from '@core/errors';
+import { t } from '@utils/i18n';
 
 import * as GPUDeviceManager from '@core/gpu/gpu-device-manager';
 import { buildEffectPipelines, paramsEqual } from '@core/gpu/pipeline-builder';
@@ -106,7 +107,7 @@ export class Renderer {
 
       // Request GPU adapter and set power preference based on platform
       // Use pre-warmed adapter/device if available (pre-requested on content script load)
-      this.onProgress?.(chrome.i18n.getMessage('initGpu') || '⏳ Initializing GPU...');
+      this.onProgress?.(t('initGpu', '⏳ Initializing GPU...'));
 
       const claimedDevice = GPUDeviceManager.claimPreWarmedDevice();
       if (claimedDevice) {

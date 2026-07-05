@@ -1,5 +1,6 @@
 import './options.css';
 import '../common-vars.css';
+import '../common/toast.css';
 import { getSettings, saveSettings, synchronizeEffectsForCustomModes, getEffectsForMode, getLocalSettings, saveLocalSettings } from '@utils/settings';
 import type { WhitelistRule } from '@/types';
 import { validateRulePattern, removeWhitelistRule, updateWhitelistRule, addWhitelistRule } from '@utils/whitelist';
@@ -10,6 +11,9 @@ import { renderParamSliders } from './param-sliders';
 import { renderColorGradingSliders, setColorGradingSlidersEnabled } from './color-grading-panel';
 import { Sidebar } from './Sidebar';
 import { runGPUBenchmark } from '@core/gpu/gpu-benchmark';
+import { sendMessage, onMessage } from '@utils/messaging';
+import { t, applyI18n } from '@utils/i18n';
+import { showToast } from '../common/toast';
 
 
 import type { Anime4KWebExtSettings } from '@/types';
@@ -175,7 +179,7 @@ const renderModesUI = () => {
     svg.appendChild(polyline);
 
     toggleBtn.appendChild(svg);
-    toggleBtn.title = chrome.i18n.getMessage('expandCollapse') || 'Expand/Collapse';
+    toggleBtn.title = t('expandCollapse', 'Expand/Collapse');
     toggleBtn.addEventListener('click', () => {
       card.classList.toggle('collapsed');
     });
@@ -183,7 +187,7 @@ const renderModesUI = () => {
     const modeName = document.createElement('h2');
     modeName.textContent = mode.name;
     modeName.contentEditable = String(!mode.isBuiltIn);
-    modeName.title = mode.isBuiltIn ? (chrome.i18n.getMessage('builtInModeCannotRename') || 'Built-in modes cannot be renamed.') : (chrome.i18n.getMessage('clickToRename') || 'Click to rename');
+    modeName.title = mode.isBuiltIn ? (t('builtInModeCannotRename', 'Built-in modes cannot be renamed.')) : (t('clickToRename', 'Click to rename'));
     modeName.addEventListener('blur', async (e) => {
       if (mode.isBuiltIn) return;
       const newName = (e.target as HTMLElement).textContent?.trim() || '';
@@ -199,11 +203,11 @@ const renderModesUI = () => {
     });
 
     const deleteBtn = document.createElement('button');
-    deleteBtn.textContent = chrome.i18n.getMessage('delete') || 'Delete';
+    deleteBtn.textContent = t('delete', 'Delete');
     deleteBtn.className = 'btn btn-danger';
     deleteBtn.style.display = mode.isBuiltIn ? 'none' : 'block';
     deleteBtn.onclick = async () => {
-      if (confirm(chrome.i18n.getMessage('deleteModeConfirm', [mode.name]))) {
+      if (confirm(t('deleteModeConfirm', undefined, [mode.name]))) {
         const deletedModeId = mode.id;
         settingsState.enhancementModes = settingsState.enhancementModes.filter(m => m.id !== deletedModeId);
         if (settingsState.selectedModeId === deletedModeId) {
@@ -220,7 +224,7 @@ const renderModesUI = () => {
 
     // Clone button — creates a custom copy of a built-in mode
     const cloneBtn = document.createElement('button');
-    cloneBtn.textContent = chrome.i18n.getMessage('clone') || 'Clone';
+    cloneBtn.textContent = t('clone', 'Clone');
     cloneBtn.className = 'btn btn-outline';
     cloneBtn.style.display = mode.isBuiltIn ? 'block' : 'none';
     cloneBtn.onclick = async () => {
@@ -252,7 +256,7 @@ const renderModesUI = () => {
     const summaryText = effectNames.length > 3
       ? effectNames.slice(0, 3).join(' > ') + ' ...'
       : effectNames.join(' > ');
-    summary.textContent = summaryText || (chrome.i18n.getMessage('noEffects') || 'No effects');
+    summary.textContent = summaryText || (t('noEffects', 'No effects'));
     card.appendChild(summary);
 
     // --- Card Content (shown when expanded) ---
@@ -362,7 +366,7 @@ const renderModesUI = () => {
 
           btn.appendChild(arrowSvg);
           btn.className = 'btn-move-effect';
-          btn.title = chrome.i18n.getMessage(dir === 'up' ? 'moveUp' : 'moveDown') || (dir === 'up' ? 'Move Up' : 'Move Down');
+          btn.title = t(dir === 'up' ? 'moveUp' : 'moveDown', dir === 'up' ? 'Move Up' : 'Move Down');
           btn.disabled = (dir === 'up' && index === 0) || (dir === 'down' && index === mode.effects.length - 1);
           btn.onclick = async () => {
             const targetMode = settingsState.enhancementModes.find(m => m.id === mode.id);
@@ -381,7 +385,7 @@ const renderModesUI = () => {
         const removeEffectBtn = document.createElement('button');
         removeEffectBtn.textContent = '×';
         removeEffectBtn.className = 'btn-remove-effect';
-        removeEffectBtn.title = chrome.i18n.getMessage('removeEffect') || 'Remove effect';
+        removeEffectBtn.title = t('removeEffect', 'Remove effect');
         removeEffectBtn.onclick = async () => {
           const targetMode = settingsState.enhancementModes.find(m => m.id === mode.id);
           if (targetMode && !targetMode.isBuiltIn) {
@@ -407,7 +411,7 @@ const renderModesUI = () => {
       addEffectContainer.className = 'add-effect-container';
       const effectSelect = document.createElement('select');
       const defaultOption = document.createElement('option');
-      defaultOption.textContent = chrome.i18n.getMessage('addEffect') || 'Add effect...';
+      defaultOption.textContent = t('addEffect', 'Add effect...');
       defaultOption.disabled = true;
       defaultOption.selected = true;
       effectSelect.appendChild(defaultOption);
@@ -450,7 +454,7 @@ const renderModesUI = () => {
   if (customModes.length > 0) {
     const customHeader = document.createElement('div');
     customHeader.className = 'modes-section-header';
-    customHeader.textContent = chrome.i18n.getMessage('customModes') || 'Custom Modes';
+    customHeader.textContent = t('customModes', 'Custom Modes');
     modesContainer.appendChild(customHeader);
     customModes.forEach(renderModeCard);
   }
@@ -459,7 +463,7 @@ const renderModesUI = () => {
   if (builtInModes.length > 0) {
     const builtInHeader = document.createElement('div');
     builtInHeader.className = 'modes-section-header';
-    builtInHeader.textContent = chrome.i18n.getMessage('builtInModes') || 'Built-in Modes';
+    builtInHeader.textContent = t('builtInModes', 'Built-in Modes');
     modesContainer.appendChild(builtInHeader);
     builtInModes.forEach(renderModeCard);
   }
@@ -484,7 +488,7 @@ const renderRulesUI = () => {
         await updateWhitelistRule(rule.pattern, newPattern);
         rule.pattern = newPattern; // Update state
       } else {
-        alert(chrome.i18n.getMessage('invalidPattern') || 'Invalid pattern format');
+        showToast(t('invalidPattern', 'Invalid pattern format'), 'error');
         (e.target as HTMLInputElement).value = rule.pattern;
       }
     });
@@ -510,7 +514,7 @@ const renderRulesUI = () => {
 
     const actionsCell = document.createElement('td');
     const deleteBtn = document.createElement('button');
-    deleteBtn.textContent = chrome.i18n.getMessage('delete') || 'Delete';
+    deleteBtn.textContent = t('delete', 'Delete');
     deleteBtn.className = 'action-btn';
     deleteBtn.addEventListener('click', async () => {
       await removeWhitelistRule(rule.pattern);
@@ -527,20 +531,11 @@ const renderRulesUI = () => {
 };
 
 const notifyUpdate = (modifiedModeId?: string) => {
-  chrome.runtime.sendMessage({ type: 'SETTINGS_UPDATED', modifiedModeId });
+  sendMessage({ type: 'SETTINGS_UPDATED', modifiedModeId });
 };
 
 const setupInternationalization = () => {
-  document.querySelectorAll<HTMLElement>('[data-i18n]').forEach(element => {
-    const key = element.getAttribute('data-i18n');
-    if (key) {
-      const message = chrome.i18n.getMessage(key);
-      if (message) {
-        if (element.tagName === 'TITLE') document.title = message;
-        else element.textContent = message;
-      }
-    }
-  });
+  applyI18n();
 
   // Add icons to tier select options
   const tierIcons: Record<string, string> = {
@@ -631,7 +626,7 @@ const setupEventListeners = () => {
   if (runBenchmarkBtn) {
     runBenchmarkBtn.addEventListener('click', async () => {
       runBenchmarkBtn.disabled = true;
-      runBenchmarkBtn.textContent = chrome.i18n.getMessage('testing') || 'Testing...';
+      runBenchmarkBtn.textContent = t('testing', 'Testing...');
 
       // Show progress bar
       const progressContainer = document.getElementById('benchmark-progress');
@@ -645,25 +640,24 @@ const setupEventListeners = () => {
           if (progressFill) progressFill.style.width = `${progress.progress * 100}%`;
           if (progressText) {
             if (progress.completed) {
-              progressText.textContent = chrome.i18n.getMessage('testComplete') || 'Test complete!';
+              progressText.textContent = t('testComplete', 'Test complete!');
             } else {
               // Convert tier key to internationalized text
               const tierKey = `tier${progress.tier.charAt(0).toUpperCase()}${progress.tier.slice(1)}` as const;
-              const tierName = chrome.i18n.getMessage(tierKey) || progress.tier;
-              progressText.textContent = chrome.i18n.getMessage('testingTier', [tierName]) || `Testing ${tierName}...`;
+              const tierName = t(tierKey, progress.tier);
+              progressText.textContent = t('testingTier', `Testing ${tierName}...`, [tierName]);
             }
           }
         });
 
         // Ask user whether to apply the recommended tier
         const tierNames: Record<PerformanceTier, string> = {
-          performance: `🚀 ${chrome.i18n.getMessage('tierPerformance') || 'Fast'}`,
-          balanced: `⚖️ ${chrome.i18n.getMessage('tierBalanced') || 'Balanced'}`,
-          quality: `🎨 ${chrome.i18n.getMessage('tierQuality') || 'Quality'}`,
-          ultra: `🔬 ${chrome.i18n.getMessage('tierUltra') || 'Ultra'}`
+          performance: `🚀 ${t('tierPerformance', 'Fast')}`,
+          balanced: `⚖️ ${t('tierBalanced', 'Balanced')}`,
+          quality: `🎨 ${t('tierQuality', 'Quality')}`,
+          ultra: `🔬 ${t('tierUltra', 'Ultra')}`
         };
-        const confirmMessage = chrome.i18n.getMessage('confirmApplyTier', [tierNames[result.tier]])
-          || `Test complete! Recommended tier: ${tierNames[result.tier]}\n\nApply this tier?`;
+        const confirmMessage = t('confirmApplyTier', `Test complete! Recommended tier: ${tierNames[result.tier]}\n\nApply this tier?`, [tierNames[result.tier]]);
 
         if (confirm(confirmMessage)) {
           await saveLocalSettings({
@@ -678,13 +672,13 @@ const setupEventListeners = () => {
       } catch (error) {
         console.error('Benchmark failed:', error);
         const errorMsg = error instanceof Error ? error.message : String(error);
-        alert((chrome.i18n.getMessage('testFailed') || 'Test failed') + ': ' + errorMsg);
+        showToast(t('testFailed', 'Test failed') + ': ' + errorMsg, 'error');
       }
 
       // Hide progress bar
       if (progressContainer) progressContainer.style.display = 'none';
       runBenchmarkBtn.disabled = false;
-      runBenchmarkBtn.textContent = chrome.i18n.getMessage('startTest') || 'Start Test';
+      runBenchmarkBtn.textContent = t('startTest', 'Start Test');
     });
   }
 
@@ -692,7 +686,7 @@ const setupEventListeners = () => {
   addModeBtn.addEventListener('click', async () => {
     const newMode: EnhancementMode = {
       id: `custom-${Date.now()}`,
-      name: chrome.i18n.getMessage('newCustomModeName') || 'New Custom Mode',
+      name: t('newCustomModeName', 'New Custom Mode'),
       isBuiltIn: false,
       effects: [],
     };
@@ -706,7 +700,7 @@ const setupEventListeners = () => {
     const newPattern = '*.example.com/*';
     // Prevent duplicate additions from the UI
     if (settingsState.whitelist.some(r => r.pattern === newPattern)) {
-      alert(chrome.i18n.getMessage('ruleAlreadyExists') || 'This rule already exists.');
+      showToast(t('ruleAlreadyExists', 'This rule already exists.'), 'error');
       return;
     }
     await addWhitelistRule(newPattern, true);
@@ -761,14 +755,14 @@ const setupEventListeners = () => {
       renderModesUI();
       await saveSettings({ customModes: settingsState.customModes });
       notifyUpdate();
-      alert(chrome.i18n.getMessage('importSuccess') || 'Import successful');
+      showToast(t('importSuccess', 'Import successful'), 'success');
     } catch (error) {
       if (error instanceof Error && error.message === 'No file selected') {
         console.log('File import cancelled.');
         return;
       }
       console.error('Import failed:', error);
-      alert(chrome.i18n.getMessage('importError') || 'Import failed: invalid format or file error.');
+      showToast(t('importError', 'Import failed: invalid format or file error.'), 'error');
     }
   });
 
@@ -795,30 +789,34 @@ const setupEventListeners = () => {
       settingsState.whitelist = validRules;
       await saveSettings({ whitelist: settingsState.whitelist });
       renderRulesUI();
-      alert(chrome.i18n.getMessage('importSuccess') || 'Import successful');
+      showToast(t('importSuccess', 'Import successful'), 'success');
     } catch (error) {
       if (error instanceof Error && error.message === 'No file selected') {
         console.log('File import cancelled.');
         return;
       }
       console.error('Import failed:', error);
-      alert(chrome.i18n.getMessage('importError') || 'Import failed: invalid format or file error.');
+      showToast(t('importError', 'Import failed: invalid format or file error.'), 'error');
     }
   });
 
   // --- Message Listeners ---
-  chrome.runtime.onMessage.addListener(async (message) => {
-    if (message.type === 'WHITELIST_UPDATED') {
-      // Re-fetch settings to get the latest whitelist from other parts of the extension
-      settingsState = await getSettings();
-      renderRulesUI();
-    } else if (message.type === 'SETTINGS_UPDATED') {
-      // Re-fetch settings and local settings to update tier and effect chain display
-      settingsState = await getSettings();
-      const localSettings = await getLocalSettings();
-      currentTier = localSettings.performanceTier;
-      renderModesUI();
-      console.log('[Options] Settings updated, tier:', currentTier);
+  onMessage(async (message) => {
+    switch (message.type) {
+      case 'WHITELIST_UPDATED':
+        // Re-fetch settings to get the latest whitelist from other parts of the extension
+        settingsState = await getSettings();
+        renderRulesUI();
+        return;
+      case 'SETTINGS_UPDATED': {
+        // Re-fetch settings and local settings to update tier and effect chain display
+        settingsState = await getSettings();
+        const localSettings = await getLocalSettings();
+        currentTier = localSettings.performanceTier;
+        renderModesUI();
+        console.log('[Options] Settings updated, tier:', currentTier);
+        return;
+      }
     }
   });
 };

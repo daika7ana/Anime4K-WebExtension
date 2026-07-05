@@ -4,6 +4,7 @@
  */
 import { initializeOnPage, deinitializeOnPage, handleSettingsUpdate } from '@core/video/video-manager';
 import { isUrlWhitelisted, getWhitelistRules } from '@utils/whitelist';
+import { onMessage } from '@utils/messaging';
 
 // Exit early in sub-frames without video to avoid unnecessary storage reads and initialization
 if (window !== window.top && !document.querySelector('video')) {
@@ -69,16 +70,16 @@ async function evaluateAndApplyWhitelistState() {
 evaluateAndApplyWhitelistState();
 
 // Listen for settings update messages from the background script
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.type === 'SETTINGS_UPDATED') {
-    handleSettingsUpdate(request.settings ?? {}, sendResponse);
-    return true; // Indicates async response
-  } else if (request.type === 'URL_UPDATED') {
-    // Re-check whitelist when URL changes
-    console.log('[Anime4KWebExt] URL changed, re-evaluating whitelist...');
-    evaluateAndApplyWhitelistState();
+onMessage((message, _sender, sendResponse) => {
+  switch (message.type) {
+    case 'SETTINGS_UPDATED':
+      handleSettingsUpdate(message.modifiedModeId, sendResponse);
+      return true; // Indicates async response
+    case 'URL_UPDATED':
+      console.log('[Anime4KWebExt] URL changed, re-evaluating whitelist...');
+      evaluateAndApplyWhitelistState();
+      return false;
   }
-  return false;
 });
 
 } // end early-exit guard

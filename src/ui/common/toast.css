@@ -1,0 +1,95 @@
+@import '../common-vars.css';
+
+#anime4k-toast-container {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 350px;
+  pointer-events: none;
+}
+
+.anime4k-toast {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--border-radius-sm);
+  box-shadow: var(--shadow-2);
+  border-left: 4px solid var(--primary);
+  pointer-events: auto;
+  font-family: var(--font-family);
+  font-size: 14px;
+  line-height: 1.5;
+  animation: toast-in 0.25s ease-out;
+  min-width: 250px;
+}
+
+.anime4k-toast.toast-info {
+  border-left-color: var(--primary);
+}
+
+.anime4k-toast.toast-success {
+  border-left-color: var(--success);
+}
+
+.anime4k-toast.toast-error {
+  border-left-color: var(--danger);
+}
+
+.toast-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.toast-message {
+  flex-grow: 1;
+  word-break: break-word;
+}
+
+.toast-close {
+  background: none;
+  border: none;
+  color: var(--text-light);
+  cursor: pointer;
+  font-size: 18px;
+  padding: 0 4px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.toast-close:hover {
+  color: var(--text);
+}
+
+.anime4k-toast.removing {
+  animation: toast-out 0.2s ease-in forwards;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes toast-out {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+}

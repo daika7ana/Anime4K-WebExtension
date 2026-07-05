@@ -1,4 +1,5 @@
 import type { EnhancementEffect, EffectClassName, ParamSliderConfig } from '../../types';
+import { t } from '@utils/i18n';
 
 // ===== Param Slider Configuration =====
 
@@ -99,7 +100,7 @@ export function renderParamSliders(
     paramContainer.className = 'effect-param-container';
 
     const label = document.createElement('label');
-    label.textContent = chrome.i18n.getMessage(cfg.labelKey) || cfg.labelFallback;
+    label.textContent = t(cfg.labelKey, cfg.labelFallback);
     label.className = 'effect-param-label';
 
     const slider = document.createElement('input');

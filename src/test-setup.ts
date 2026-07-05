@@ -17,8 +17,9 @@ vi.stubGlobal('chrome', {
   runtime: {
     lastError: null,
     sendMessage: vi.fn(),
-    onMessage: { addListener: vi.fn() },
+    onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
   },
+  tabs: { sendMessage: vi.fn() },
   i18n: {
     getMessage: vi.fn((key: string) => key),
   },

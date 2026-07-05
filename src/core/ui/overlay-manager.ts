@@ -1,4 +1,5 @@
 import { ANIME4K_BUTTON_CLASS } from '@/constants';
+import { t } from '@utils/i18n';
 
 /**
  * OverlayManager
@@ -344,7 +345,7 @@ export class OverlayManager {
 
   private createButtonInShadow(): HTMLButtonElement {
     const button = document.createElement('button');
-    button.innerText = chrome.i18n.getMessage('enhanceButton');
+    button.innerText = t('enhanceButton');
     button.classList.add(ANIME4K_BUTTON_CLASS);
     button.part = 'button'; // Expose to external styles (if needed)
     this.shadowRoot.appendChild(button);

@@ -111,11 +111,11 @@ describe('content.ts', () => {
       await loadContentScript();
 
       const sendResponse = vi.fn();
-      const request = { type: 'SETTINGS_UPDATED', settings: { modifiedModeId: 'test' } };
+      const request = { type: 'SETTINGS_UPDATED', modifiedModeId: 'test' };
 
       const result = messageListener(request, {}, sendResponse);
 
-      expect(mockHandleSettingsUpdate).toHaveBeenCalledWith(request.settings, sendResponse);
+      expect(mockHandleSettingsUpdate).toHaveBeenCalledWith('test', sendResponse);
       expect(result).toBe(true); // async response indicator
     });
 
@@ -130,7 +130,7 @@ describe('content.ts', () => {
       // Send URL_UPDATED — should trigger re-evaluation
       // Since whitelist is disabled and isCurrentlyActive is already true,
       // no action should be taken (state unchanged)
-      messageListener({ type: 'URL_UPDATED' }, {}, vi.fn());
+      messageListener({ type: 'URL_UPDATED', url: 'https://example.com' }, {}, vi.fn());
       await new Promise(r => setTimeout(r, 50));
 
       // No re-initialization since already active
@@ -165,7 +165,7 @@ describe('content.ts', () => {
       mockIsUrlWhitelisted.mockReturnValue(false);
 
       // Trigger re-evaluation via URL_UPDATED
-      messageListener({ type: 'URL_UPDATED' }, {}, vi.fn());
+      messageListener({ type: 'URL_UPDATED', url: 'https://example.com' }, {}, vi.fn());
       await new Promise(r => setTimeout(r, 50));
 
       expect(mockDeinitializeOnPage).toHaveBeenCalled();
