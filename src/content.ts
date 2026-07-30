@@ -7,11 +7,6 @@ import { getAllManagedVideos, getEnhancer } from '@core/video/enhancer-map';
 import { isUrlWhitelisted, getWhitelistRules } from '@utils/whitelist';
 import { onMessage } from '@utils/messaging';
 
-// Exit early in sub-frames without video to avoid unnecessary storage reads and initialization
-if (window !== window.top && !document.querySelector('video')) {
-  // Silent exit — no cleanup needed
-} else {
-
 let isCurrentlyActive = false; // Track enhancement state for the current page
 
 // Check if the current page is on the whitelist
@@ -128,5 +123,3 @@ onMessage((message, _sender, sendResponse) => {
       return false;
   }
 });
-
-} // end early-exit guard
