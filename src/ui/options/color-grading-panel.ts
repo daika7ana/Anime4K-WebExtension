@@ -1,4 +1,5 @@
-import type { ColorGradingSettings } from '@/types'
+import type { ColorGradingSettings } from '@/types';
+import { t } from '@utils/i18n';
 
 // Param keys that are numeric (excludes `enabled` which is boolean)
 type ColorGradingNumericKey = 'brightness' | 'gamma' | 'contrast' | 'saturation' | 'vibrance' | 'exposure'
@@ -110,11 +111,11 @@ export function renderColorGradingSliders(
     labelContainer.className = 'effect-param-label-container'
 
     const label = document.createElement('label')
-    label.textContent = chrome.i18n.getMessage(cfg.labelKey) || cfg.labelFallback
+    label.textContent = t(cfg.labelKey, cfg.labelFallback)
     label.className = 'effect-param-label'
 
     const desc = document.createElement('span')
-    desc.textContent = chrome.i18n.getMessage(cfg.descKey) || cfg.descFallback
+    desc.textContent = t(cfg.descKey, cfg.descFallback)
     desc.className = 'effect-param-desc'
 
     labelContainer.appendChild(label)

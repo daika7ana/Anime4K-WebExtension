@@ -423,5 +423,65 @@
   },
   "vibranceDesc": {
     "message": "選擇性地增強低飽和度顏色，同時保留已有的鮮豔色彩。"
+  },
+  "supportedBrowsers": {
+    "message": "支援的瀏覽器："
+  },
+  "supportedChrome": {
+    "message": "Google Chrome 113+"
+  },
+  "supportedEdge": {
+    "message": "Microsoft Edge 113+"
+  },
+  "supportedFirefox": {
+    "message": "Firefox（於 about:config 中啟用 WebGPU）"
+  },
+  "unsupportedDesc": {
+    "message": "您的瀏覽器不支援 WebGPU，而 WebGPU 是影片增強所必需的。"
+  },
+  "unsupportedFirefoxNote": {
+    "message": "Firefox 使用者：於 about:config 中啟用「dom.webgpu.enabled」並重新啟動瀏覽器。"
+  },
+  "unsupportedTitle": {
+    "message": "WebGPU 不受支援"
+  },
+  "toggleEnhancementDesc": {
+    "message": "切換目前影片的增強"
+  },
+  "autoEnableOnWhitelist": {
+    "message": "在白名單站台自動啟用"
+  },
+  "autoEnableOnWhitelistDesc": {
+    "message": "在白名單站台上自動增強影片，無需點擊 Enhance 按鈕。"
+  },
+  "showDiagnostics": {
+    "message": "顯示診斷資訊"
+  },
+  "showDiagnosticsDesc": {
+    "message": "在增強過程中顯示包含FPS、幀時間和GPU資訊的效能疊加層。"
+  },
+  "hotkeys": {
+    "message": "快捷鍵"
+  },
+  "enableHotkey": {
+    "message": "啟用增強切換快速鍵"
+  },
+  "enableHotkeyDesc": {
+    "message": "啟用在目前影片上切換影片增強的鍵盤快速鍵。"
+  },
+  "hotkeyShortcut": {
+    "message": "目前快速鍵"
+  },
+  "hotkeyChangeInstructions": {
+    "message": "要變更此快速鍵，請在 Chrome 中開啟"
+  },
+  "hotkeyChangeInstructionsMid": {
+    "message": "或在 Firefox 中開啟"
+  },
+  "hotkeyChangeInstructionsPost": {
+    "message": "。"
+  },
+  "diagnostics": {
+    "message": "診斷"
   }
 }

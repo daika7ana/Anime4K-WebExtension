@@ -1,7 +1,23 @@
 import { defineConfig } from 'vitest/config';
 import path from 'path';
 
+// Plugin to handle .wgsl shader files as raw text
+function wgslPlugin(): { name: string; transform: (code: string, id: string) => { code: string; map: null } | undefined } {
+  return {
+    name: 'wgsl-loader',
+    transform(code: string, id: string) {
+      if (id.endsWith('.wgsl')) {
+        return {
+          code: `export default ${JSON.stringify(code)};`,
+          map: null,
+        };
+      }
+    },
+  };
+}
+
 export default defineConfig({
+  plugins: [wgslPlugin()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
@@ -20,11 +36,5 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test-setup.ts'],
     include: ['src/**/*.test.ts', 'src/**/*.spec.ts'],
-    // Mock .wgsl shader files as empty strings
-    server: {
-      deps: {
-        inline: [/\.wgsl$/],
-      },
-    },
   },
 });

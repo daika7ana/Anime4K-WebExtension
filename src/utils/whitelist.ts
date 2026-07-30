@@ -3,6 +3,7 @@
  * Provides whitelist rule matching, validation, and persistence
  */
 import { getSettings, saveSettings } from './settings';
+import { sendMessage } from './messaging';
 import type { WhitelistRule } from '../types';
 
 /**
@@ -71,7 +72,7 @@ export async function addWhitelistRule(pattern: string, enabled: boolean = true)
     await saveSettings({ whitelist: newWhitelist });
 
     // Notify that the whitelist has been updated
-    chrome.runtime.sendMessage({ type: 'WHITELIST_UPDATED' });
+    sendMessage({ type: 'WHITELIST_UPDATED' });
   }
 }
 
@@ -87,7 +88,7 @@ export async function removeWhitelistRule(pattern: string): Promise<void> {
     await saveSettings({ whitelist: newWhitelist });
 
     // Notify that the whitelist has been updated
-    chrome.runtime.sendMessage({ type: 'WHITELIST_UPDATED' });
+    sendMessage({ type: 'WHITELIST_UPDATED' });
   }
 }
 
@@ -112,7 +113,7 @@ export async function updateWhitelistRule(oldPattern: string, update: boolean | 
       await saveSettings({ whitelist });
 
       // Notify that the whitelist has been updated
-      chrome.runtime.sendMessage({ type: 'WHITELIST_UPDATED' });
+      sendMessage({ type: 'WHITELIST_UPDATED' });
     }
   }
 }

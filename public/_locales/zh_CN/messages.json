@@ -418,5 +418,65 @@
   },
   "vibranceDesc": {
     "message": "选择性地增强低饱和度颜色，同时保留已有的鲜艳色彩。"
+  },
+  "supportedBrowsers": {
+    "message": "支持的浏览器："
+  },
+  "supportedChrome": {
+    "message": "Google Chrome 113+"
+  },
+  "supportedEdge": {
+    "message": "Microsoft Edge 113+"
+  },
+  "supportedFirefox": {
+    "message": "Firefox（在 about:config 中启用 WebGPU）"
+  },
+  "unsupportedDesc": {
+    "message": "您的浏览器不支持 WebGPU，而 WebGPU 是视频增强所必需的。"
+  },
+  "unsupportedFirefoxNote": {
+    "message": "Firefox 用户：在 about:config 中启用「dom.webgpu.enabled」并重启浏览器。"
+  },
+  "unsupportedTitle": {
+    "message": "WebGPU 不受支持"
+  },
+  "toggleEnhancementDesc": {
+    "message": "切换当前视频的增强"
+  },
+  "autoEnableOnWhitelist": {
+    "message": "在白名单站点自动启用"
+  },
+  "autoEnableOnWhitelistDesc": {
+    "message": "在白名单站点上自动增强视频，无需点击 Enhance 按钮。"
+  },
+  "showDiagnostics": {
+    "message": "显示诊断信息"
+  },
+  "showDiagnosticsDesc": {
+    "message": "在增强过程中显示包含FPS、帧时间和GPU信息的性能叠加层。"
+  },
+  "hotkeys": {
+    "message": "快捷键"
+  },
+  "enableHotkey": {
+    "message": "启用增强切换热键"
+  },
+  "enableHotkeyDesc": {
+    "message": "启用在当前视频上切换视频增强的键盘热键。"
+  },
+  "hotkeyShortcut": {
+    "message": "当前热键"
+  },
+  "hotkeyChangeInstructions": {
+    "message": "要更改此热键，请在 Chrome 中打开"
+  },
+  "hotkeyChangeInstructionsMid": {
+    "message": "或在 Firefox 中打开"
+  },
+  "hotkeyChangeInstructionsPost": {
+    "message": "。"
+  },
+  "diagnostics": {
+    "message": "诊断"
   }
 }

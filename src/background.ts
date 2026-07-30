@@ -1,5 +1,6 @@
 import { getSettings, getLocalSettings } from '@utils/settings';
 import { ensureLatestConfig } from '@utils/migration';
+import { onMessage, sendTabMessage } from '@utils/messaging';
 
 const RULESET_ID = 'ruleset_1';
 
@@ -83,7 +84,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 // Listen for tab updates
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === 'complete' && tab.url) {
-    chrome.tabs.sendMessage(tabId, {
+    sendTabMessage(tabId, {
       type: 'URL_UPDATED',
       url: tab.url
     }).catch(error => {
@@ -94,28 +95,50 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
-// Listen for requests from content scripts/popup/options
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.type === 'SETTINGS_UPDATED') {
-    console.log('[Background] Settings updated, checking DNR rules...');
-    updateDNRuleset();
+// Listen for keyboard shortcut commands
+chrome.commands.onCommand.addListener(async (command) => {
+  if (command === 'toggle-enhancement') {
+    // Check if hotkey is enabled in settings
+    const settings = await getSettings();
+    if (!settings.enableHotkey) return;
 
-    // Forward to all content scripts so active enhancers pick up the change.
-    // The options page sends via chrome.runtime.sendMessage (reaches background),
-    // but content scripts only listen on chrome.runtime.onMessage in their own context,
-    // so we must relay via chrome.tabs.sendMessage to each tab.
-    chrome.tabs.query({}, (tabs) => {
-      for (const tab of tabs) {
-        if (tab.id) {
-          chrome.tabs.sendMessage(tab.id, request).catch(() => {
-            // Tab may not have a content script — ignore silently
-          });
-        }
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const activeTab = tabs[0];
+      if (activeTab?.id) {
+        sendTabMessage(activeTab.id, { type: 'TOGGLE_ENHANCEMENT' }).catch(() => {
+          // Tab may not have a content script — ignore silently
+        });
       }
     });
-  } else if (request.type === 'OPEN_OPTIONS_PAGE') {
-    chrome.runtime.openOptionsPage();
-  } else if (request.type === 'OPEN_ONBOARDING') {
-    chrome.tabs.create({ url: chrome.runtime.getURL('onboarding.html') });
+  }
+});
+
+// Listen for requests from content scripts/popup/options
+onMessage((message, _sender, _sendResponse) => {
+  switch (message.type) {
+    case 'SETTINGS_UPDATED':
+      console.log('[Background] Settings updated, checking DNR rules...');
+      updateDNRuleset();
+
+      // Forward to all content scripts so active enhancers pick up the change.
+      // The options page sends via chrome.runtime.sendMessage (reaches background),
+      // but content scripts only listen on chrome.runtime.onMessage in their own context,
+      // so we must relay via chrome.tabs.sendMessage to each tab.
+      chrome.tabs.query({}, (tabs) => {
+        for (const tab of tabs) {
+          if (tab.id) {
+            sendTabMessage(tab.id, message).catch(() => {
+              // Tab may not have a content script — ignore silently
+            });
+          }
+        }
+      });
+      break;
+    case 'OPEN_OPTIONS_PAGE':
+      chrome.runtime.openOptionsPage();
+      break;
+    case 'OPEN_ONBOARDING':
+      chrome.tabs.create({ url: chrome.runtime.getURL('onboarding.html') });
+      break;
   }
 });

@@ -791,6 +791,16 @@ select:hover {
   align-items: center;
 }
 
+.hotkey-display {
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 14px;
+  padding: 4px 8px;
+  border: 1px solid var(--outline);
+  border-radius: var(--border-radius);
+  background-color: var(--surface-container-low);
+  color: var(--on-surface);
+}
+
 /* --- Theme Select --- */
 .theme-select {
   min-width: 160px;

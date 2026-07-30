@@ -15,6 +15,7 @@ vi.mock('./video-enhancer', () => ({
         getCurrentModeId: vi.fn().mockReturnValue('builtin-mode-a'),
         updateSettings: vi.fn().mockResolvedValue(undefined),
         reapply: vi.fn().mockResolvedValue(undefined),
+        toggleEnhancement: vi.fn().mockResolvedValue(undefined),
       };
       mockEnhancers.push(enhancer);
       mockCreate(...args);
@@ -32,6 +33,7 @@ vi.mock('@utils/settings', () => ({
     customModes: [],
     whitelist: [],
     whitelistEnabled: false,
+    autoEnableOnWhitelist: false,
   }),
 }));
 
@@ -43,10 +45,10 @@ vi.mock('@/constants', () => ({
 import {
   processVideoElement,
   initializeOnPage,
-  setupDOMObserver,
   deinitializeOnPage,
 } from './video-manager';
 import * as EnhancerMap from './enhancer-map';
+import { getSettings } from '@utils/settings';
 
 describe('video-manager', () => {
   beforeEach(() => {
@@ -93,6 +95,77 @@ describe('video-manager', () => {
 
       expect(mockCreate).toHaveBeenCalledWith(video);
       expect(EnhancerMap.hasEnhancer(video)).toBe(true);
+    });
+
+    it('auto-enables enhancement when autoEnableOnWhitelist is true and whitelist is enabled', async () => {
+      vi.mocked(getSettings).mockResolvedValue({
+        selectedModeId: 'builtin-mode-a',
+        enhancementModes: [],
+        performanceTier: 'balanced',
+        customModes: [],
+        whitelist: [],
+        whitelistEnabled: true,
+        autoEnableOnWhitelist: true,
+      } as any);
+
+      const video = document.createElement('video');
+      document.body.appendChild(video);
+
+      processVideoElement(video, 'test');
+
+      // Wait for the fire-and-forget maybeAutoEnable to complete
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Get the enhancer that was created
+      const enhancer = EnhancerMap.getEnhancer(video);
+      expect(enhancer).toBeDefined();
+      expect(enhancer!.toggleEnhancement).toHaveBeenCalled();
+    });
+
+    it('does not auto-enable when autoEnableOnWhitelist is false', async () => {
+      vi.mocked(getSettings).mockResolvedValue({
+        selectedModeId: 'builtin-mode-a',
+        enhancementModes: [],
+        performanceTier: 'balanced',
+        customModes: [],
+        whitelist: [],
+        whitelistEnabled: true,
+        autoEnableOnWhitelist: false,
+      } as any);
+
+      const video = document.createElement('video');
+      document.body.appendChild(video);
+
+      processVideoElement(video, 'test');
+
+      await vi.advanceTimersByTimeAsync(0);
+
+      const enhancer = EnhancerMap.getEnhancer(video);
+      expect(enhancer).toBeDefined();
+      expect(enhancer!.toggleEnhancement).not.toHaveBeenCalled();
+    });
+
+    it('does not auto-enable when whitelist is disabled', async () => {
+      vi.mocked(getSettings).mockResolvedValue({
+        selectedModeId: 'builtin-mode-a',
+        enhancementModes: [],
+        performanceTier: 'balanced',
+        customModes: [],
+        whitelist: [],
+        whitelistEnabled: false,
+        autoEnableOnWhitelist: true,
+      } as any);
+
+      const video = document.createElement('video');
+      document.body.appendChild(video);
+
+      processVideoElement(video, 'test');
+
+      await vi.advanceTimersByTimeAsync(0);
+
+      const enhancer = EnhancerMap.getEnhancer(video);
+      expect(enhancer).toBeDefined();
+      expect(enhancer!.toggleEnhancement).not.toHaveBeenCalled();
     });
   });
 

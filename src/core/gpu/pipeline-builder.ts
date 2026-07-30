@@ -8,18 +8,13 @@
  *  - Generation counter to prevent concurrent builds from clobbering each other
  *  - Shallow params comparison (replaces JSON.stringify)
  */
-import type { Anime4KPipeline } from 'anime4k-webgpu-async';
-import type { Dimensions, EnhancementEffect, CustomEffectDescriptor } from '@/types';
+import type { Dimensions, EnhancementEffect, CustomEffectDescriptor, DestroyablePipeline, Anime4KClassMap } from '@/types';
 import { CAS } from '@core/effects/cas';
 import { ColorAdjust } from '@core/effects/color-adjust';
 import { Debanding } from '@core/effects/debanding';
+import { t } from '@utils/i18n';
 import { yieldToMain } from '@core/utils/yield-utils';
 import { PipelinePreWarmer } from './pipeline-prewarmer';
-
-/** Anime4KPipeline extended with optional destroy() that some implementations expose */
-export interface PipelineWithDestroy extends Anime4KPipeline {
-  destroy?(): void;
-}
 
 /**
  * Registry of custom (non-anime4k-webgpu-async) effects.
@@ -86,7 +81,7 @@ interface BuildPipelinesParams {
   targetDimensions: Dimensions;
   effects: EnhancementEffect[];
   /** Previously built pipelines to destroy before creating new ones */
-  oldPipelines: PipelineWithDestroy[];
+  oldPipelines: DestroyablePipeline[];
   /** Shared PipelinePreWarmer for shader pre-warming */
   preWarmer: PipelinePreWarmer;
   /** Progress callback for UI updates */
@@ -106,7 +101,7 @@ interface BuildPipelinesParams {
  *
  * @returns Array of built pipelines, or empty array if superseded by a newer build
  */
-export async function buildEffectPipelines(params: BuildPipelinesParams): Promise<PipelineWithDestroy[]> {
+export async function buildEffectPipelines(params: BuildPipelinesParams): Promise<DestroyablePipeline[]> {
   const {
     device, videoFrameTexture, video, targetDimensions, effects,
     oldPipelines, preWarmer: pipelinePreWarmer, onProgress, isStale,
@@ -129,7 +124,7 @@ export async function buildEffectPipelines(params: BuildPipelinesParams): Promis
     }
   }
 
-  const pipelines: PipelineWithDestroy[] = [];
+  const pipelines: DestroyablePipeline[] = [];
   let currentTexture = videoFrameTexture;
   let curWidth = video.videoWidth;
   let curHeight = video.videoHeight;
@@ -145,7 +140,7 @@ export async function buildEffectPipelines(params: BuildPipelinesParams): Promis
   // The real pipeline construction in Phase 1 will then hit the cache (~1-3ms instead of ~25ms).
   // On subsequent calls (same effect chain), the pre-warmer skips via in-memory deduplication,
   // and the driver cache makes Phase 1 fast regardless.
-  onProgress?.(chrome.i18n.getMessage('warmupShadersProgress') || '⏳ Compiling shaders...');
+  onProgress?.(t('warmupShadersProgress', '⏳ Compiling shaders...'));
   try {
     await pipelinePreWarmer.warm(device, effects, (className, dev, tex) => {
       const custom = CUSTOM_EFFECTS[className];
@@ -178,25 +173,23 @@ export async function buildEffectPipelines(params: BuildPipelinesParams): Promis
   // so we yield the main thread after each pipeline creation to keep the UI responsive.
   for (let i = 0; i < effects.length; i++) {
     // Report progress
-    const loadingMsg = chrome.i18n.getMessage('loadingEffect', [String(i + 1), String(effects.length)])
-      || `⏳ Loading effect ${i + 1}/${effects.length}...`;
+    const loadingMsg = t('loadingEffect', `⏳ Loading effect ${i + 1}/${effects.length}...`, [String(i + 1), String(effects.length)]);
     onProgress?.(loadingMsg, i + 1, effects.length);
 
     const effect = effects[i];
-    let pipeline: PipelineWithDestroy | null = null;
+    let pipeline: DestroyablePipeline | null = null;
 
     // Check for custom effects first (not from anime4k-webgpu-async library)
     const custom = CUSTOM_EFFECTS[effect.className];
     if (custom) {
       pipeline = new custom.EffectClass(
         custom.getDescriptor(device, currentTexture, effect.params),
-      ) as unknown as PipelineWithDestroy;
+      );
     } else {
-      const EffectClass = (anime4kModule as Record<string, unknown>)[effect.className];
+      const EffectClass = (anime4kModule as unknown as Anime4KClassMap)[effect.className];
 
       if (EffectClass) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        pipeline = new (EffectClass as any)({
+        pipeline = new EffectClass({
           device,
           inputTexture: currentTexture,
           nativeDimensions: { width: curWidth, height: curHeight },
@@ -205,8 +198,7 @@ export async function buildEffectPipelines(params: BuildPipelinesParams): Promis
         // Apply effect params (e.g. DoG strength) after construction
         if (effect.params && pipeline) {
           for (const [key, value] of Object.entries(effect.params)) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (pipeline as any).updateParam?.(key, value);
+            pipeline.updateParam(key, value);
           }
         }
       } else {
@@ -280,7 +272,7 @@ export async function buildEffectPipelines(params: BuildPipelinesParams): Promis
       pass: () => Promise.resolve(),
       getOutputTexture: () => videoFrameTexture,
       updateParam: () => { },
-    } as unknown as PipelineWithDestroy);
+    } as unknown as DestroyablePipeline);
   }
 
   // Notify that warmup is complete

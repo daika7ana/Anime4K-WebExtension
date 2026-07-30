@@ -1,6 +1,8 @@
 import './onboarding.css';
 import '../common-vars.css';
 import { saveLocalSettings } from '@utils/settings';
+import { sendMessage } from '@utils/messaging';
+import { t, applyI18n } from '@utils/i18n';
 import type { BenchmarkProgress } from '@/types';
 import { runGPUBenchmark } from '@core/gpu/gpu-benchmark';
 import { themeManager } from '../theme-manager';
@@ -8,13 +10,12 @@ import type { PerformanceTier, GPUBenchmarkResult } from '@/types';
 
 // Tier display names
 const TIER_DISPLAY: Record<PerformanceTier, { icon: string; name: string }> = {
-    performance: { icon: '🚀', name: chrome.i18n.getMessage('tierPerformance') || 'Fast' },
-    balanced: { icon: '⚖️', name: chrome.i18n.getMessage('tierBalanced') || 'Balanced' },
-    quality: { icon: '🎨', name: chrome.i18n.getMessage('tierQuality') || 'Quality' },
-    ultra: { icon: '🔬', name: chrome.i18n.getMessage('tierUltra') || 'Ultra' },
+    performance: { icon: '🚀', name: t('tierPerformance', 'Fast') },
+    balanced: { icon: '⚖️', name: t('tierBalanced', 'Balanced') },
+    quality: { icon: '🎨', name: t('tierQuality', 'Quality') },
+    ultra: { icon: '🔬', name: t('tierUltra', 'Ultra') },
 };
 
-let currentStep = 1;
 let selectedTier: PerformanceTier = 'balanced';
 let benchmarkResult: GPUBenchmarkResult | null = null;
 
@@ -24,6 +25,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Apply internationalization
     applyI18n();
+
+    // Check WebGPU support before proceeding
+    if (!navigator.gpu) {
+        showUnsupportedScreen();
+        return;
+    }
 
     // Get elements
     const startTestBtn = document.getElementById('start-test') as HTMLButtonElement;
@@ -38,10 +45,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         startTestBtn.disabled = true;
         skipTestBtn.style.display = 'none';
 
-        const testStatus = document.getElementById('test-status')!;
-        const progressContainer = document.getElementById('progress-container')!;
-        const progressFill = document.getElementById('progress-fill')!;
-        const progressText = document.getElementById('progress-text')!;
+        const testStatus = document.getElementById('test-status');
+        const progressContainer = document.getElementById('progress-container');
+        const progressFill = document.getElementById('progress-fill');
+        const progressText = document.getElementById('progress-text');
+        if (!testStatus || !progressContainer || !progressFill || !progressText) {
+          console.error('Required benchmark UI elements not found');
+          startTestBtn.disabled = false;
+          skipTestBtn.style.display = 'block';
+          return;
+        }
 
         testStatus.style.display = 'none';
         progressContainer.style.display = 'block';
@@ -50,12 +63,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             benchmarkResult = await runGPUBenchmark((progress: BenchmarkProgress) => {
                 progressFill.style.width = `${progress.progress * 100}%`;
                 if (progress.completed) {
-                    progressText.textContent = chrome.i18n.getMessage('testComplete') || 'Test complete!';
+                    progressText.textContent = t('testComplete', 'Test complete!');
                 } else {
                     // Convert tier key to internationalized text
                     const tierKey = `tier${progress.tier.charAt(0).toUpperCase()}${progress.tier.slice(1)}` as const;
-                    const tierName = chrome.i18n.getMessage(tierKey) || progress.tier;
-                    progressText.textContent = chrome.i18n.getMessage('testingTier', [tierName]) || `Testing ${tierName}...`;
+                    const tierName = t(tierKey, progress.tier);
+                    progressText.textContent = t('testingTier', `Testing ${tierName}...`, [tierName]);
                 }
             });
 
@@ -74,7 +87,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             goToStep(2);
         } catch (error) {
             console.error('Benchmark failed:', error);
-            progressText.textContent = chrome.i18n.getMessage('testFailedDefault') || 'Test failed. Using default settings.';
+            progressText.textContent = t('testFailedDefault', 'Test failed. Using default settings.');
             selectedTier = 'balanced';
 
             await saveLocalSettings({ performanceTier: selectedTier });
@@ -106,7 +119,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             hasCompletedOnboarding: true,
         });
         // Notify all renderers to update
-        chrome.runtime.sendMessage({ type: 'SETTINGS_UPDATED' });
+        sendMessage({ type: 'SETTINGS_UPDATED' });
         goToStep(3);
     });
 
@@ -121,14 +134,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 });
 
-function applyI18n(): void {
-    document.querySelectorAll<HTMLElement>('[data-i18n]').forEach(el => {
-        const key = el.getAttribute('data-i18n');
-        if (key) {
-            const message = chrome.i18n.getMessage(key);
-            if (message) el.textContent = message;
-        }
+function showUnsupportedScreen(): void {
+    // Hide step indicator and all step content
+    const stepIndicator = document.querySelector('.step-indicator') as HTMLElement;
+    if (stepIndicator) {
+        stepIndicator.style.display = 'none';
+    }
+    document.querySelectorAll('.step-content').forEach(el => {
+        (el as HTMLElement).style.display = 'none';
     });
+
+    // Show unsupported screen
+    const unsupportedScreen = document.getElementById('unsupported-screen');
+    if (unsupportedScreen) {
+        unsupportedScreen.style.display = 'block';
+        // Apply i18n to the newly visible content
+        applyI18n(unsupportedScreen);
+    }
 }
 
 function goToStep(step: number): void {
@@ -144,31 +166,33 @@ function goToStep(step: number): void {
         el.classList.toggle('active', i + 1 === step);
     });
 
-    currentStep = step;
-
     if (step === 2) {
         updateTierButtons();
     }
 }
 
 function updateResultDisplay(): void {
-    const resultTier = document.getElementById('result-tier')!;
-    const resultDesc = document.getElementById('result-desc')!;
+    const resultTier = document.getElementById('result-tier');
+    const resultDesc = document.getElementById('result-desc');
+    if (!resultTier || !resultDesc) {
+      console.error('Required result display elements not found');
+      return;
+    }
 
     const display = TIER_DISPLAY[selectedTier];
     resultTier.textContent = `${display.icon} ${display.name}`;
 
     // Only show recommendation text if the selected tier matches the benchmark-recommended tier
     if (benchmarkResult && selectedTier === benchmarkResult.tier) {
-        resultDesc.textContent = chrome.i18n.getMessage('resultDesc') || 'This tier is recommended based on your hardware.';
+        resultDesc.textContent = t('resultDesc', 'This tier is recommended based on your hardware.');
         resultDesc.style.display = 'block';
     } else if (benchmarkResult) {
         // User selected a different tier
-        resultDesc.textContent = chrome.i18n.getMessage('manuallySelected') || 'You have selected a different tier.';
+        resultDesc.textContent = t('manuallySelected', 'You have selected a different tier.');
         resultDesc.style.display = 'block';
     } else {
         // Test was skipped
-        resultDesc.textContent = chrome.i18n.getMessage('defaultTier') || 'Default tier selected.';
+        resultDesc.textContent = t('defaultTier', 'Default tier selected.');
         resultDesc.style.display = 'block';
     }
 }

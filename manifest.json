@@ -40,6 +40,12 @@
       }
     ]
   },
+  "commands": {
+    "toggle-enhancement": {
+      "suggested_key": { "default": "Alt+Shift+E" },
+      "description": "__MSG_toggleEnhancementDesc__"
+    }
+  },
   "default_locale": "en",
   "icons": {
     "16": "icons/icon16.png",

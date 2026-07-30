@@ -3,12 +3,9 @@
  * Responsible for adding enhancement buttons to page video elements and managing enhancer instances
  */
 import { initializeOnPage, deinitializeOnPage, handleSettingsUpdate } from '@core/video/video-manager';
+import { getAllManagedVideos, getEnhancer } from '@core/video/enhancer-map';
 import { isUrlWhitelisted, getWhitelistRules } from '@utils/whitelist';
-
-// Exit early in sub-frames without video to avoid unnecessary storage reads and initialization
-if (window !== window.top && !document.querySelector('video')) {
-  // Silent exit — no cleanup needed
-} else {
+import { onMessage } from '@utils/messaging';
 
 let isCurrentlyActive = false; // Track enhancement state for the current page
 
@@ -29,7 +26,8 @@ async function shouldInitialize(): Promise<boolean> {
     if (window !== window.top) {
       try {
         // Same-origin: can access top frame's location directly
-        if (isUrlWhitelisted(window.top!.location.href, rules)) return true;
+        const topUrl = window.top?.location.href;
+        if (topUrl && isUrlWhitelisted(topUrl, rules)) return true;
       } catch {
         // Cross-origin: fall back to document.referrer (the URL that loaded this iframe)
         if (document.referrer && isUrlWhitelisted(document.referrer, rules)) return true;
@@ -67,17 +65,61 @@ async function evaluateAndApplyWhitelistState() {
 // Initialize the page
 evaluateAndApplyWhitelistState();
 
-// Listen for settings update messages from the background script
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.type === 'SETTINGS_UPDATED') {
-    handleSettingsUpdate(request.settings ?? {}, sendResponse);
-    return true; // Indicates async response
-  } else if (request.type === 'URL_UPDATED') {
-    // Re-check whitelist when URL changes
-    console.log('[Anime4KWebExt] URL changed, re-evaluating whitelist...');
-    evaluateAndApplyWhitelistState();
-  }
-  return false;
-});
+/**
+ * Find the largest visible managed video in the current viewport.
+ * Returns null if no managed video is visible.
+ */
+function findPrimaryVideo(): HTMLVideoElement | null {
+  const videos = getAllManagedVideos();
+  if (videos.length === 0) return null;
 
-} // end early-exit guard
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+
+  let bestVideo: HTMLVideoElement | null = null;
+  let bestArea = 0;
+
+  for (const video of videos) {
+    const rect = video.getBoundingClientRect();
+    // Check if video is visible (has dimensions and intersects viewport)
+    if (rect.width === 0 || rect.height === 0) continue;
+    if (rect.bottom < 0 || rect.top > viewportHeight || rect.right < 0 || rect.left > viewportWidth) continue;
+
+    // Calculate visible area
+    const visibleWidth = Math.min(rect.width, viewportWidth - Math.max(0, rect.left));
+    const visibleHeight = Math.min(rect.height, viewportHeight - Math.max(0, rect.top));
+    const area = visibleWidth * visibleHeight;
+
+    if (area > bestArea) {
+      bestArea = area;
+      bestVideo = video;
+    }
+  }
+
+  return bestVideo;
+}
+
+// Listen for settings update messages from the background script
+onMessage((message, _sender, sendResponse) => {
+  switch (message.type) {
+    case 'SETTINGS_UPDATED':
+      handleSettingsUpdate(message.modifiedModeId, sendResponse);
+      return true; // Indicates async response
+    case 'URL_UPDATED':
+      console.log('[Anime4KWebExt] URL changed, re-evaluating whitelist...');
+      evaluateAndApplyWhitelistState();
+      return false;
+    case 'TOGGLE_ENHANCEMENT':
+      {
+        const video = findPrimaryVideo();
+        if (video) {
+          const enhancer = getEnhancer(video);
+          if (enhancer) {
+            // Fire-and-forget: don't block the message channel
+            enhancer.toggleEnhancement();
+          }
+        }
+      }
+      return false;
+  }
+});

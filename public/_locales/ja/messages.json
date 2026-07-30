@@ -419,5 +419,65 @@
   },
   "vibranceDesc": {
     "message": "彩度の低い色を選択的に強調し、すでに鮮やかな色は保持します。"
+  },
+  "supportedBrowsers": {
+    "message": "対応ブラウザ："
+  },
+  "supportedChrome": {
+    "message": "Google Chrome 113以上"
+  },
+  "supportedEdge": {
+    "message": "Microsoft Edge 113以上"
+  },
+  "supportedFirefox": {
+    "message": "Firefox（about:configでWebGPUを有効化）"
+  },
+  "unsupportedDesc": {
+    "message": "お使いのブラウザはWebGPUに対応していません。WebGPUは映像の超解像に必要です。"
+  },
+  "unsupportedFirefoxNote": {
+    "message": "Firefoxユーザー：about:configで「dom.webgpu.enabled」を有効にし、ブラウザを再起動してください。"
+  },
+  "unsupportedTitle": {
+    "message": "WebGPU未対応"
+  },
+  "toggleEnhancementDesc": {
+    "message": "アクティブな動画の超解像を切り替え"
+  },
+  "autoEnableOnWhitelist": {
+    "message": "ホワイトリストサイトで自動有効化"
+  },
+  "autoEnableOnWhitelistDesc": {
+    "message": "ホワイトリストに登録されたサイトで、「超解像」ボタンをクリックせずに動画を自動的に拡張します。"
+  },
+  "showDiagnostics": {
+    "message": "診断情報を表示"
+  },
+  "showDiagnosticsDesc": {
+    "message": "拡張中にFPS、フレーム時間、GPU情報を含むパフォーマンスオーバーレイを表示します。"
+  },
+  "hotkeys": {
+    "message": "ホットキー"
+  },
+  "enableHotkey": {
+    "message": "超解像切替ホットキーを有効にする"
+  },
+  "enableHotkeyDesc": {
+    "message": "アクティブな動画の超解像を切り替えるキーボードホットキーを有効にします。"
+  },
+  "hotkeyShortcut": {
+    "message": "現在のホットキー"
+  },
+  "hotkeyChangeInstructions": {
+    "message": "このホットキーを変更するには、Chrome では"
+  },
+  "hotkeyChangeInstructionsMid": {
+    "message": "を、Firefox では"
+  },
+  "hotkeyChangeInstructionsPost": {
+    "message": "を開いてください。"
+  },
+  "diagnostics": {
+    "message": "診断"
   }
 }

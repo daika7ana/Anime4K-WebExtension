@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // vi.hoisted ensures these are available when vi.mock factories execute (they're hoisted too)
-const { mockOverlay, mockRenderer } = vi.hoisted(() => {
+const { mockOverlay, mockRenderer, mockDiagnosticsOverlay } = vi.hoisted(() => {
   const mockOverlay = {
     getButton: vi.fn(() => document.createElement('button')),
     getCanvas: vi.fn(() => document.createElement('canvas')),
@@ -18,12 +18,25 @@ const { mockOverlay, mockRenderer } = vi.hoisted(() => {
     updateVideoSource: vi.fn().mockResolvedValue(undefined),
   };
 
-  return { mockOverlay, mockRenderer };
+  const mockDiagnosticsOverlay = {
+    show: vi.fn(),
+    hide: vi.fn(),
+    update: vi.fn(),
+    destroy: vi.fn(),
+  };
+
+  return { mockOverlay, mockRenderer, mockDiagnosticsOverlay };
 });
 
 vi.mock('@core/ui/overlay-manager', () => ({
   OverlayManager: {
     create: vi.fn(() => mockOverlay),
+  },
+}));
+
+vi.mock('@core/ui/diagnostics-overlay', () => ({
+  DiagnosticsOverlay: {
+    create: vi.fn(() => mockDiagnosticsOverlay),
   },
 }));
 
@@ -46,6 +59,9 @@ vi.mock('@utils/settings', () => ({
   getEffectsForMode: vi.fn().mockReturnValue([
     { id: 'anime4k/Helper/ClampHighlights', name: 'Clamp Highlights', className: 'ClampHighlights' },
   ]),
+  getLocalSettings: vi.fn().mockResolvedValue({
+    showDiagnostics: false,
+  }),
 }));
 
 vi.mock('@/constants', () => ({
@@ -59,8 +75,9 @@ vi.mock('@core/utils/yield-utils', () => ({
 
 import { VideoEnhancer } from './video-enhancer';
 import { OverlayManager } from '@core/ui/overlay-manager';
+import { DiagnosticsOverlay } from '@core/ui/diagnostics-overlay';
 import { Renderer } from '@core/renderer';
-import { getSettings } from '@utils/settings';
+import { getSettings, getLocalSettings } from '@utils/settings';
 
 describe('VideoEnhancer', () => {
   let video: HTMLVideoElement;
@@ -273,6 +290,8 @@ describe('VideoEnhancer', () => {
         whitelist: [],
         whitelistEnabled: false,
         enableCrossOriginFix: false,
+        autoEnableOnWhitelist: false,
+        enableHotkey: true,
         colorGrading: { enabled: false, brightness: 0, gamma: 1, contrast: 1, saturation: 1, vibrance: 0, exposure: 0 },
       };
 
@@ -378,6 +397,315 @@ describe('VideoEnhancer', () => {
       expect(createCall.targetDimensions).toEqual({ width: 1920, height: 1080 });
 
       enhancer.destroy();
+    });
+  });
+
+  describe('diagnostics overlay', () => {
+    beforeEach(() => {
+      // Provide a minimal requestAdapter stub so getAdapterInfo resolves quickly
+      vi.stubGlobal('navigator', {
+        ...navigator,
+        gpu: {
+          requestAdapter: vi.fn().mockResolvedValue(null),
+        },
+      });
+    });
+
+    it('creates diagnostics overlay when showDiagnostics is true', async () => {
+      (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        showDiagnostics: true,
+      });
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      expect(DiagnosticsOverlay.create).toHaveBeenCalled();
+      expect(mockDiagnosticsOverlay.show).toHaveBeenCalled();
+      enhancer.destroy();
+    });
+
+    it('does not create diagnostics overlay when showDiagnostics is false', async () => {
+      (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        showDiagnostics: false,
+      });
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      // create should not have been called from initRenderer
+      // (the mock may have been called from vi.mock factory init, so check it wasn't
+      // called more than initial factory calls — but since create is used as a static
+      // factory, the only calls should be from the enhancer if showDiagnostics is true)
+      // Use mockDiagnosticsOverlay.show to verify overlay was not created
+      expect(mockDiagnosticsOverlay.show).not.toHaveBeenCalled();
+      enhancer.destroy();
+    });
+
+    it('destroys diagnostics overlay on disableEnhancement', async () => {
+      (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        showDiagnostics: true,
+      });
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      expect(DiagnosticsOverlay.create).toHaveBeenCalled();
+
+      await enhancer.toggleEnhancement();
+
+      expect(mockDiagnosticsOverlay.destroy).toHaveBeenCalled();
+    });
+
+    it('onFrameRendered callback updates diagnostics overlay', async () => {
+      (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        showDiagnostics: true,
+      });
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      // Get the onFrameRendered callback passed to Renderer.create
+      const createCall = (Renderer.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(createCall.onFrameRendered).toBeDefined();
+
+      // Simulate a frame render
+      createCall.onFrameRendered!(12.5);
+
+      expect(mockDiagnosticsOverlay.update).toHaveBeenCalledWith(12.5, 1);
+      enhancer.destroy();
+    });
+
+    it('handles showDiagnostics toggle in updateSettings', async () => {
+      (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        showDiagnostics: true,
+      });
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      expect(DiagnosticsOverlay.create).toHaveBeenCalled();
+      vi.clearAllMocks();
+
+      // Now toggle showDiagnostics off
+      (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        showDiagnostics: false,
+      });
+
+      const emptySettings = {
+        selectedModeId: 'builtin-mode-a',
+        enhancementModes: [
+          { id: 'builtin-mode-a', baseMode: 'A' as const, name: 'Mode A', isBuiltIn: true as const },
+        ],
+        targetResolutionSetting: 'x2',
+        performanceTier: 'balanced' as const,
+        customModes: [],
+        whitelist: [],
+        whitelistEnabled: false,
+        enableCrossOriginFix: false,
+        autoEnableOnWhitelist: false,
+        enableHotkey: false,
+        colorGrading: { enabled: false, brightness: 0, gamma: 1, contrast: 1, saturation: 1, vibrance: 0, exposure: 0 },
+      };
+
+      await enhancer.updateSettings(emptySettings);
+
+      expect(mockDiagnosticsOverlay.destroy).toHaveBeenCalled();
+      enhancer.destroy();
+    });
+
+    describe('getAdapterInfo', () => {
+      beforeEach(() => {
+        vi.clearAllMocks();
+      });
+
+      it('returns WebGPU info when adapter info is available', async () => {
+        vi.stubGlobal('navigator', {
+          ...navigator,
+          gpu: {
+            requestAdapter: vi.fn().mockResolvedValue({
+              requestAdapterInfo: vi.fn().mockResolvedValue({
+                vendor: 'NVIDIA',
+                architecture: 'ampere',
+                device: 'RTX 4090',
+                description: '',
+              }),
+            }),
+          },
+        });
+
+        (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ showDiagnostics: true });
+
+        const enhancer = VideoEnhancer.create(video);
+        await enhancer.toggleEnhancement();
+
+        const createCalls = (DiagnosticsOverlay.create as ReturnType<typeof vi.fn>).mock.calls;
+        const adapterInfo = createCalls[createCalls.length - 1][1];
+        expect(adapterInfo).toBe('NVIDIA ampere RTX 4090');
+
+        enhancer.destroy();
+      });
+
+      it('falls back to WebGL when WebGPU returns empty strings', async () => {
+        const mockGetParameter = vi.fn((param: number): string => {
+          if (param === 0x9246) return 'Fake GPU (WebGL fallback)';
+          return '';
+        });
+        const mockGl = {
+          getExtension: vi.fn((name: string) =>
+            name === 'WEBGL_debug_renderer_info' ? { UNMASKED_RENDERER_WEBGL: 0x9246 } : null
+          ),
+          getParameter: mockGetParameter,
+          RENDERER: 0x1F01,
+        };
+
+        vi.stubGlobal('navigator', {
+          ...navigator,
+          gpu: {
+            requestAdapter: vi.fn().mockResolvedValue({
+              requestAdapterInfo: vi.fn().mockResolvedValue({
+                vendor: '',
+                architecture: '',
+                device: '',
+                description: '',
+              }),
+            }),
+          },
+        });
+        vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(mockGl as any);
+
+        (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ showDiagnostics: true });
+
+        const enhancer = VideoEnhancer.create(video);
+        await enhancer.toggleEnhancement();
+
+        const createCalls = (DiagnosticsOverlay.create as ReturnType<typeof vi.fn>).mock.calls;
+        const adapterInfo = createCalls[createCalls.length - 1][1];
+        expect(adapterInfo).toBe('Fake GPU (WebGL fallback)');
+
+        enhancer.destroy();
+      });
+
+      it('falls back to WebGL when WebGPU throws', async () => {
+        const mockGetParameter = vi.fn((param: number): string => {
+          if (param === 0x9246) return 'Fake GPU (WebGL fallback)';
+          return '';
+        });
+        const mockGl = {
+          getExtension: vi.fn((name: string) =>
+            name === 'WEBGL_debug_renderer_info' ? { UNMASKED_RENDERER_WEBGL: 0x9246 } : null
+          ),
+          getParameter: mockGetParameter,
+          RENDERER: 0x1F01,
+        };
+
+        vi.stubGlobal('navigator', {
+          ...navigator,
+          gpu: {
+            requestAdapter: vi.fn().mockRejectedValue(new Error('Blocked')),
+          },
+        });
+        vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(mockGl as any);
+
+        (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ showDiagnostics: true });
+
+        const enhancer = VideoEnhancer.create(video);
+        await enhancer.toggleEnhancement();
+
+        const createCalls = (DiagnosticsOverlay.create as ReturnType<typeof vi.fn>).mock.calls;
+        const adapterInfo = createCalls[createCalls.length - 1][1];
+        expect(adapterInfo).toBe('Fake GPU (WebGL fallback)');
+
+        enhancer.destroy();
+      });
+
+      it('falls back to WebGL standard RENDERER when debug info unavailable', async () => {
+        const mockGetParameter = vi.fn((param: number): string => {
+          if (param === 0x1F01) return 'Intel Iris Xe Graphics';
+          return '';
+        });
+        const mockGl = {
+          getExtension: vi.fn(() => null),
+          getParameter: mockGetParameter,
+          RENDERER: 0x1F01,
+        };
+
+        vi.stubGlobal('navigator', {
+          ...navigator,
+          gpu: {
+            requestAdapter: vi.fn().mockRejectedValue(new Error('Blocked')),
+          },
+        });
+        vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(mockGl as any);
+
+        (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ showDiagnostics: true });
+
+        const enhancer = VideoEnhancer.create(video);
+        await enhancer.toggleEnhancement();
+
+        const createCalls = (DiagnosticsOverlay.create as ReturnType<typeof vi.fn>).mock.calls;
+        const adapterInfo = createCalls[createCalls.length - 1][1];
+        expect(adapterInfo).toBe('Intel Iris Xe Graphics');
+
+        enhancer.destroy();
+      });
+
+      it('returns "Unknown GPU" when both WebGPU and WebGL fail', async () => {
+        const mockGl = {
+          getExtension: vi.fn(() => null),
+          getParameter: vi.fn(() => ''),
+          RENDERER: 0x1F01,
+        };
+
+        vi.stubGlobal('navigator', {
+          ...navigator,
+          gpu: {
+            requestAdapter: vi.fn().mockResolvedValue(null),
+          },
+        });
+        vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(mockGl as any);
+
+        (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ showDiagnostics: true });
+
+        const enhancer = VideoEnhancer.create(video);
+        await enhancer.toggleEnhancement();
+
+        const createCalls = (DiagnosticsOverlay.create as ReturnType<typeof vi.fn>).mock.calls;
+        const adapterInfo = createCalls[createCalls.length - 1][1];
+        expect(adapterInfo).toBe('Unknown GPU');
+
+        enhancer.destroy();
+      });
+
+      it('filters out generic WebKit WebGL renderer string', async () => {
+        const mockGetParameter = vi.fn((param: number): string => {
+          if (param === 0x1F01) return 'WebKit WebGL';
+          return '';
+        });
+        const mockGl = {
+          getExtension: vi.fn(() => null),
+          getParameter: mockGetParameter,
+          RENDERER: 0x1F01,
+        };
+
+        vi.stubGlobal('navigator', {
+          ...navigator,
+          gpu: {
+            requestAdapter: vi.fn().mockRejectedValue(new Error('Blocked')),
+          },
+        });
+        vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(mockGl as any);
+
+        (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ showDiagnostics: true });
+
+        const enhancer = VideoEnhancer.create(video);
+        await enhancer.toggleEnhancement();
+
+        const createCalls = (DiagnosticsOverlay.create as ReturnType<typeof vi.fn>).mock.calls;
+        const adapterInfo = createCalls[createCalls.length - 1][1];
+        expect(adapterInfo).toBe('Unknown GPU');
+
+        enhancer.destroy();
+      });
     });
   });
 });

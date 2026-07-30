@@ -1,4 +1,5 @@
 import type { EnhancementEffect, EffectClassName, ParamSliderConfig } from '../../types';
+import { t } from '@utils/i18n';
 
 // ===== Param Slider Configuration =====
 
@@ -84,28 +85,29 @@ export function renderParamSliders(
   // have registered sliders. Cast at the lookup boundary so a typo elsewhere would still surface
   // as a missing entry (undefined) rather than a type error masking a real bug.
   const configs = PARAM_REGISTRY[effect.className as EffectClassName];
-  if (!configs || !effect.params) return;
+  const params = effect.params;
+  if (!configs || !params) return;
 
   for (const cfg of configs) {
     // Auto-populate the default for params that were added after the effect was created
     // (e.g. bandThreshold on a Debanding effect created before the param existed).
     // The default lives in effect.params and gets persisted on the user's first slider change.
-    if (!(cfg.paramKey in effect.params!)) {
-      effect.params![cfg.paramKey] = cfg.defaultValue;
+    if (!(cfg.paramKey in params)) {
+      params[cfg.paramKey] = cfg.defaultValue;
     }
 
     const paramContainer = document.createElement('div');
     paramContainer.className = 'effect-param-container';
 
     const label = document.createElement('label');
-    label.textContent = chrome.i18n.getMessage(cfg.labelKey) || cfg.labelFallback;
+    label.textContent = t(cfg.labelKey, cfg.labelFallback);
     label.className = 'effect-param-label';
 
     const slider = document.createElement('input');
     slider.type = 'range';
     slider.min = String(cfg.sliderMin);
     slider.max = String(cfg.sliderMax);
-    slider.value = String(cfg.toSlider(effect.params[cfg.paramKey] ?? cfg.defaultValue));
+    slider.value = String(cfg.toSlider(params[cfg.paramKey] ?? cfg.defaultValue));
     slider.className = 'effect-param-slider';
 
     const valueDisplay = document.createElement('span');
@@ -118,7 +120,7 @@ export function renderParamSliders(
 
     slider.addEventListener('change', async () => {
       const newValue = cfg.fromSlider(Number(slider.value));
-      effect.params![cfg.paramKey] = newValue;
+      params[cfg.paramKey] = newValue;
       await saveCallback(modeId);
     });
 

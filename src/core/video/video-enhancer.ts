@@ -1,8 +1,11 @@
-import { getSettings, getEffectsForMode } from '@utils/settings';
+import { getSettings, getEffectsForMode, getLocalSettings } from '@utils/settings';
+import { sendMessage } from '@utils/messaging';
+import { t } from '@utils/i18n';
 import { Renderer } from '@core/renderer';
 import { ANIME4K_APPLIED_ATTR } from '@/constants';
 import { Dimensions, Anime4KWebExtSettings, EnhancementMode, EnhancementEffect, ColorGradingSettings } from '@/types';
 import { OverlayManager } from '@core/ui/overlay-manager';
+import { DiagnosticsOverlay } from '@core/ui/diagnostics-overlay';
 import { yieldToAnimationFrame } from '@core/utils/yield-utils';
 
 /**
@@ -14,6 +17,8 @@ export class VideoEnhancer {
   private currentModeId: string | null = null;
   private overlay: OverlayManager;
   private button: HTMLButtonElement;
+  private diagnosticsOverlay: DiagnosticsOverlay | null = null;
+  private currentPipelineCount = 0;
 
   private constructor(private video: HTMLVideoElement) {
     this.overlay = OverlayManager.create(this.video);
@@ -100,7 +105,7 @@ export class VideoEnhancer {
     if (this.initializing) return;
     this.initializing = true;
 
-    this.button.innerText = chrome.i18n.getMessage('enhancing');
+    this.button.innerText = t('enhancing');
     this.button.disabled = true;
     this.fixAttempted = false; // Reset the fix attempt flag
 
@@ -130,7 +135,7 @@ export class VideoEnhancer {
       // --- Core operation ---
       await this.initRenderer();
       this.video.setAttribute(ANIME4K_APPLIED_ATTR, 'true');
-      this.button.innerText = chrome.i18n.getMessage('cancelEnhance');
+      this.button.innerText = t('cancelEnhance');
 
     } catch (error) {
       const err = error as Error;
@@ -143,22 +148,22 @@ export class VideoEnhancer {
           await this.fixCrossOrigin();
           await this.initRenderer(); // Retry
           this.video.setAttribute(ANIME4K_APPLIED_ATTR, 'true');
-          this.button.innerText = chrome.i18n.getMessage('cancelEnhance');
+          this.button.innerText = t('cancelEnhance');
         } catch (retryError) {
           console.error('[Anime4KWebExt] Enhancer failed even after retry:', retryError);
           this.disableEnhancement();
-          this.showErrorModal((retryError as Error).message || chrome.i18n.getMessage('enhanceError'));
+          this.showErrorModal((retryError as Error).message || t('enhanceError'));
         }
       } else if (isCrossOriginError && !settings.enableCrossOriginFix) {
         // --- User prompt ---
         console.warn('[Anime4KWebExt] Cross-origin error detected, but fix is disabled. Prompting user.');
         this.disableEnhancement();
-        this.showErrorModal(chrome.i18n.getMessage('crossOriginHint') || 'Enhancement failed due to cross-origin restrictions. Please enable Compatibility Mode in the options.', true);
+          this.showErrorModal(t('crossOriginHint', 'Enhancement failed due to cross-origin restrictions. Please enable Compatibility Mode in the options.'), true);
       } else {
         // --- Other errors ---
         console.error('[Anime4KWebExt] Failed to initialize enhancer:', err);
         this.disableEnhancement();
-        this.showErrorModal(err.message || chrome.i18n.getMessage('enhanceError'));
+        this.showErrorModal(err.message || t('enhanceError'));
       }
     } finally {
       this.initializing = false;
@@ -172,13 +177,13 @@ export class VideoEnhancer {
    */
   private async initRenderer(): Promise<void> {
     // Detect DRM-protected content early (EME sets mediaKeys on the video element)
-    if ((this.video as any).mediaKeys) {
+    if (this.video.mediaKeys) {
       throw new Error('DRM detected. Video enhancement is not supported for DRM-protected content.');
     }
 
     // Ensure metadata is loaded before initializing the renderer
     if (this.video.readyState < 1) { // HAVE_METADATA
-      this.button.innerText = chrome.i18n.getMessage('waitingVideoLoad') || '⏳ Waiting for video...';
+      this.button.innerText = t('waitingVideoLoad', '⏳ Waiting for video...');
       await new Promise(resolve => {
         this.video.addEventListener('loadedmetadata', resolve, { once: true });
       });
@@ -191,7 +196,12 @@ export class VideoEnhancer {
     const settings = await getSettings();
 
     const { selectedModeId, enhancementModes, targetResolutionSetting } = settings;
-    const selectedMode = enhancementModes.find((m: EnhancementMode) => m.id === selectedModeId) || enhancementModes.find((m: EnhancementMode) => m.isBuiltIn)!;
+    const selectedMode =
+      enhancementModes.find((m: EnhancementMode) => m.id === selectedModeId)
+      ?? enhancementModes.find((m: EnhancementMode) => m.isBuiltIn);
+    if (!selectedMode) {
+      throw new Error('No valid enhancement mode found');
+    }
     this.currentModeId = selectedMode.id;
 
     const targetDimensions = this.calculateTargetDimensions(
@@ -208,6 +218,17 @@ export class VideoEnhancer {
     const baseEffects = getEffectsForMode(selectedMode, settings.performanceTier);
     const effects = this.getEffectsWithColorGrading(baseEffects, settings.colorGrading);
 
+    // Store pipeline count for diagnostics
+    this.currentPipelineCount = effects.length;
+
+    // Create diagnostics overlay if enabled in local settings
+    const localSettings = await getLocalSettings();
+    if (localSettings.showDiagnostics) {
+      const adapterInfo = await this.getAdapterInfo();
+      this.diagnosticsOverlay = DiagnosticsOverlay.create(this.video, adapterInfo);
+      this.diagnosticsOverlay.show();
+    }
+
     this.renderer = await Renderer.create({
       video: this.video,
       canvas: canvas,
@@ -222,9 +243,9 @@ export class VideoEnhancer {
         if (isDrmError) {
           this.showErrorModal('This video uses DRM copy protection. Video enhancement is not supported for DRM-protected content.');
         } else if (isCrossOriginError && !settings.enableCrossOriginFix) {
-          this.showErrorModal(chrome.i18n.getMessage('crossOriginHint') || 'Enhancement failed due to cross-origin restrictions. Please enable Compatibility Mode in the options.', true);
+        this.showErrorModal(t('crossOriginHint', 'Enhancement failed due to cross-origin restrictions. Please enable Compatibility Mode in the options.'), true);
         } else {
-          this.showErrorModal(chrome.i18n.getMessage('renderError') || 'A rendering error occurred.');
+          this.showErrorModal(t('renderError', 'A rendering error occurred.'));
         }
         this.disableEnhancement();
       },
@@ -234,10 +255,13 @@ export class VideoEnhancer {
       onProgress: (stage: string | null) => {
         if (stage === null) {
           // Warmup complete, restore button text
-          this.button.innerText = chrome.i18n.getMessage('cancelEnhance');
+          this.button.innerText = t('cancelEnhance');
         } else {
           this.button.innerText = stage;
         }
+      },
+      onFrameRendered: (frameTime: number) => {
+        this.diagnosticsOverlay?.update(frameTime, this.currentPipelineCount);
       },
     });
 
@@ -254,7 +278,12 @@ export class VideoEnhancer {
 
     console.log('[Anime4KWebExt] Updating renderer with new settings...');
     const { selectedModeId, enhancementModes, targetResolutionSetting } = newSettings;
-    const selectedMode = enhancementModes.find((m: EnhancementMode) => m.id === selectedModeId) || enhancementModes.find((m: EnhancementMode) => m.isBuiltIn)!;
+    const selectedMode =
+      enhancementModes.find((m: EnhancementMode) => m.id === selectedModeId)
+      ?? enhancementModes.find((m: EnhancementMode) => m.isBuiltIn);
+    if (!selectedMode) {
+      throw new Error('No valid enhancement mode found');
+    }
 
     const newTargetDimensions = this.calculateTargetDimensions(
       this.video.videoWidth,
@@ -282,6 +311,20 @@ export class VideoEnhancer {
 
     this.currentModeId = selectedMode.id;
     console.log(`[Anime4KWebExt] Renderer updated to mode: ${selectedMode.name}`);
+
+    // Update pipeline count for diagnostics
+    this.currentPipelineCount = effects.length;
+
+    // Handle diagnostics overlay toggle
+    const localSettings = await getLocalSettings();
+    if (localSettings.showDiagnostics && !this.diagnosticsOverlay) {
+      const adapterInfo = await this.getAdapterInfo();
+      this.diagnosticsOverlay = DiagnosticsOverlay.create(this.video, adapterInfo);
+      this.diagnosticsOverlay.show();
+    } else if (!localSettings.showDiagnostics && this.diagnosticsOverlay) {
+      this.diagnosticsOverlay.destroy();
+      this.diagnosticsOverlay = null;
+    }
   }
 
   /**
@@ -414,13 +457,71 @@ export class VideoEnhancer {
   private disableEnhancement(): void {
     console.log('[Anime4KWebExt] disableEnhancement called. Current renderer:', this.renderer);
     console.log('[Anime4KWebExt] Video opacity before:', this.video.style.opacity);
+    if (this.diagnosticsOverlay) {
+      this.diagnosticsOverlay.destroy();
+      this.diagnosticsOverlay = null;
+    }
     this.releaseWebGPUResources();
     this.overlay.hideCanvas();
     console.log('[Anime4KWebExt] Video opacity after hideCanvas:', this.video.style.opacity);
     this.video.removeAttribute(ANIME4K_APPLIED_ATTR);
-    this.button.innerText = chrome.i18n.getMessage('enhanceButton');
+    this.button.innerText = t('enhanceButton');
     this.currentModeId = null;
     console.log('[Anime4KWebExt] disableEnhancement completed.');
+  }
+
+  /**
+   * Gets GPU adapter info string for diagnostics display.
+   * Tries WebGPU adapter info first, then falls back to WebGL renderer info
+   * when WebGPU info is unavailable (common with anti-fingerprinting hardening).
+   */
+  private async getAdapterInfo(): Promise<string> {
+    // Try WebGPU adapter info first
+    try {
+      if (navigator.gpu) {
+        const adapter = await navigator.gpu.requestAdapter();
+        if (adapter) {
+          const gpuAdapter = adapter as unknown as {
+            requestAdapterInfo?: () => Promise<{ vendor: string; architecture: string; device: string; description: string }>
+          };
+          if (gpuAdapter.requestAdapterInfo) {
+            const info = await gpuAdapter.requestAdapterInfo();
+            const parts = [info.vendor, info.architecture, info.device]
+              .filter(Boolean)
+              .filter(s => s.length > 0);
+            if (parts.length > 0) {
+              return parts.join(' ');
+            }
+          }
+        }
+      }
+    } catch {
+      // Fall through to WebGL fallback
+    }
+
+    // Fallback: WebGL debug renderer info
+    try {
+      const canvas = document.createElement('canvas');
+      const gl = (canvas.getContext('webgl2') || canvas.getContext('webgl')) as WebGLRenderingContext | null;
+      if (gl) {
+        const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+        if (debugInfo) {
+          const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+          if (renderer && typeof renderer === 'string' && renderer.length > 0) {
+            return renderer;
+          }
+        }
+        // Last resort: standard RENDERER parameter
+        const renderer = gl.getParameter(gl.RENDERER);
+        if (renderer && typeof renderer === 'string' && renderer.length > 0 && renderer !== 'WebKit WebGL') {
+          return renderer;
+        }
+      }
+    } catch {
+      // Fall through to default
+    }
+
+    return 'Unknown GPU';
   }
 
   /**
@@ -474,14 +575,14 @@ export class VideoEnhancer {
 
     if (showOptionsLink) {
       const link = document.createElement('a');
-      link.textContent = chrome.i18n.getMessage('goToOptions') || 'Go to Options';
+      link.textContent = t('goToOptions', 'Go to Options');
       link.href = '#';
       link.style.color = '#8ab4f8';
       link.style.marginTop = '8px';
       link.style.display = 'block';
       link.onclick = (e) => {
         e.preventDefault();
-        chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS_PAGE' });
+        sendMessage({ type: 'OPEN_OPTIONS_PAGE' });
       };
       notification.appendChild(link);
     }

@@ -14,7 +14,7 @@
  * shaders remain cached in the driver.
  */
 
-import type { EnhancementEffect } from '@/types';
+import type { EnhancementEffect, EffectClassDescriptor, Anime4KClassCtor, Anime4KClassMap, DisposablePipeline } from '@/types';
 import { yieldToMain } from '@core/utils/yield-utils';
 
 export class PipelinePreWarmer {
@@ -34,7 +34,7 @@ export class PipelinePreWarmer {
   async warm(
     device: GPUDevice,
     effects: EnhancementEffect[],
-    customEffectHandler?: (className: string, device: GPUDevice, dummyTexture: GPUTexture) => { EffectClass: any; descriptor: Record<string, unknown> } | null
+    customEffectHandler?: (className: string, device: GPUDevice, dummyTexture: GPUTexture) => { EffectClass: Anime4KClassCtor; descriptor: EffectClassDescriptor } | null
   ): Promise<void> {
     // Deduplicate: only warm if the chain has changed
     const signature = JSON.stringify(effects.map(e => e.className));
@@ -70,8 +70,8 @@ export class PipelinePreWarmer {
         if (this.currentWarmId !== warmId) return; // finally handles cleanup
 
         try {
-          let EffectClass: any;
-          let descriptor: Record<string, unknown> | null = null;
+          let EffectClass: Anime4KClassCtor | undefined;
+          let descriptor: EffectClassDescriptor | null = null;
 
           // Check for custom effects first
           if (customEffectHandler) {
@@ -83,7 +83,7 @@ export class PipelinePreWarmer {
           }
 
           if (!EffectClass) {
-            EffectClass = (anime4kModule as Record<string, any>)[effect.className];
+            EffectClass = (anime4kModule as unknown as Anime4KClassMap)[effect.className];
             // Default descriptor for anime4k-webgpu-async library effects
             descriptor = {
               device,
@@ -134,7 +134,7 @@ export class PipelinePreWarmer {
     seenSet.add(pipeline);
 
     try {
-      const p = pipeline as any;
+      const p = pipeline as DisposablePipeline;
       // Destroy children first to avoid double-destroy
       if (Array.isArray(p.pipelines)) {
         for (const sub of p.pipelines) {

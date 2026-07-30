@@ -68,8 +68,29 @@ export function processVideoElement(videoEl: HTMLVideoElement, source: string): 
     // Register in the Map immediately to establish a "lock"
     EnhancerMap.associateEnhancer(videoEl, enhancer);
     console.log('[Anime4KWebExt] Associated new enhancer to video:', videoEl);
+
+    // Auto-enable enhancement if the setting is on and the site is whitelisted
+    maybeAutoEnable(videoEl, enhancer);
   } catch (error) {
     console.error('Failed to create enhancer for video:', videoEl, error);
+  }
+}
+
+/**
+ * Fire-and-forget auto-enable: triggers enhancement automatically when
+ * autoEnableOnWhitelist is true, whitelist mode is active, and the
+ * video is not already enhanced.
+ */
+async function maybeAutoEnable(videoEl: HTMLVideoElement, enhancer: VideoEnhancer): Promise<void> {
+  try {
+    const settings = await getSettings();
+    if (!settings.autoEnableOnWhitelist) return;
+    if (!settings.whitelistEnabled) return;
+    // Only auto-enable if the video isn't already enhanced
+    if (videoEl.hasAttribute(ANIME4K_APPLIED_ATTR)) return;
+    await enhancer.toggleEnhancement();
+  } catch (error) {
+    console.warn('[Anime4KWebExt] Auto-enable failed:', error);
   }
 }
 
@@ -261,10 +282,10 @@ function setupLightweightVideoDetection(): MutationObserver {
  * @param sendResponse The response callback function
  */
 export async function handleSettingsUpdate(
-  message: { type: string, modifiedModeId?: string },
-  sendResponse: (response?: any) => void
+  modifiedModeId: string | undefined,
+  sendResponse: (response?: { status: string; message: string }) => void
 ): Promise<void> {
-  console.log('Received settings update:', message);
+  console.log('Received settings update, modifiedModeId:', modifiedModeId);
 
   const newSettings = await getSettings();
   const videos = EnhancerMap.getAllManagedVideos();
@@ -276,9 +297,9 @@ export async function handleSettingsUpdate(
   for (const videoElement of videos) {
     const enhancer = EnhancerMap.getEnhancer(videoElement);
     if (enhancer && videoElement.getAttribute(ANIME4K_APPLIED_ATTR) === 'true') {
-      if (message.modifiedModeId) {
+      if (modifiedModeId) {
         // Options page edit: only update videos using the modified mode (hot-swap)
-        if (enhancer.getCurrentModeId() === message.modifiedModeId) {
+        if (enhancer.getCurrentModeId() === modifiedModeId) {
           updatePromises.push(
             enhancer.updateSettings(newSettings).then(() => { updatedCount++; })
           );
