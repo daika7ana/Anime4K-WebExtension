@@ -159,8 +159,8 @@ h3 {
 }
 
 /* ===== Form Controls ===== */
-select,
-button {
+.card select,
+.card button {
   width: 100%;
   padding: var(--spacing-2) var(--spacing-3);
   border-radius: var(--border-radius);
@@ -185,20 +185,20 @@ select {
   cursor: pointer;
 }
 
-select:focus,
-button:focus {
+.card select:focus,
+.card button:focus {
   outline: none;
   border-color: var(--primary);
   box-shadow: 0 0 0 3px var(--primary-container);
 }
 
-select:hover {
+.card select:hover {
   background-color: var(--surface-container);
   border-color: var(--on-surface-variant);
 }
 
 
-button {
+.card button {
   background-color: var(--primary-container);
   color: var(--on-primary-container);
   border: none;
@@ -213,14 +213,14 @@ button {
   gap: 6px;
 }
 
-button:hover {
+.card button:hover {
   background-color: var(--primary-container);
   color: var(--on-primary-container);
   box-shadow: var(--shadow-1);
   transform: translateY(-1px);
 }
 
-button:active {
+.card button:active {
   transform: translateY(0);
   box-shadow: none;
 }

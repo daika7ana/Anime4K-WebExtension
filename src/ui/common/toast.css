@@ -15,7 +15,7 @@
 .anime4k-toast {
   display: flex;
   flex-direction: row;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 12px 16px;
   background: var(--surface);
@@ -46,22 +46,38 @@
 .toast-icon {
   font-size: 18px;
   flex-shrink: 0;
+  line-height: 1.5;
+  margin-top: 0;
 }
 
 .toast-message {
   flex-grow: 1;
-  word-break: break-word;
+  overflow-wrap: break-word;
+  line-height: 1.5;
 }
 
 .toast-close {
+  width: auto;
+  min-width: unset;
+  min-height: unset;
+  max-height: unset;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
+  border-radius: 4px;
   color: var(--text-light);
   cursor: pointer;
   font-size: 18px;
+  font-weight: normal;
   padding: 0 4px;
+  margin: 0;
   flex-shrink: 0;
   line-height: 1;
+  box-shadow: none;
+  transition: none;
+  transform: none;
 }
 
 .toast-close:hover {
