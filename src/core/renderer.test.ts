@@ -2,11 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { installGPUMock, removeGPUMock, createMockGPUBuffer, type MockGPUObjects } from '@/test/webgpu-mock';
 import type { Dimensions, EnhancementEffect, RendererOptions } from '@/types';
 import type { ProfilerSnapshot } from '@core/gpu/gpu-timestamp-profiler';
+import type { GpuDeviceLease } from '@core/gpu/gpu-device-manager';
 import { RendererInitializationError } from '@core/errors';
 
 const {
-  mockClaimPreWarmedDevice,
-  mockRequestGPUDevice,
+  mockAcquireGPUDevice,
   mockInvalidatePreWarm,
   mockGetPreWarmer,
   mockBuildEffectPipelines,
@@ -14,8 +14,7 @@ const {
 } = vi.hoisted(() => {
   const fn = () => vi.fn();
   return {
-    mockClaimPreWarmedDevice: fn(),
-    mockRequestGPUDevice: fn(),
+    mockAcquireGPUDevice: fn(),
     mockInvalidatePreWarm: fn(),
     mockGetPreWarmer: fn(),
     mockBuildEffectPipelines: fn(),
@@ -25,8 +24,7 @@ const {
 
 vi.mock('@core/gpu/gpu-device-manager', () => ({
   preWarmGPU: vi.fn(),
-  claimPreWarmedDevice: mockClaimPreWarmedDevice,
-  requestGPUDevice: mockRequestGPUDevice,
+  acquireGPUDevice: mockAcquireGPUDevice,
   invalidatePreWarm: mockInvalidatePreWarm,
   getPreWarmer: mockGetPreWarmer,
 }));
@@ -88,10 +86,56 @@ function createMockPipeline() {
   };
 }
 
+interface CreateMockLeaseOptions {
+  onRelease?: () => void;
+}
+
+/**
+ * Build a lease backed by `device` that mirrors the real manager's loss/ref
+ * behavior closely enough to drive the renderer. `release` is a spy so tests can
+ * assert the renderer released rather than destroyed the device directly.
+ */
+function createMockLease(
+  device: unknown,
+  adapter: unknown,
+  options: CreateMockLeaseOptions = {},
+): GpuDeviceLease & { release: ReturnType<typeof vi.fn> } {
+  let lost = false;
+  const callbacks = new Set<(info: GPUDeviceLostInfo) => void>();
+  (device as { lost: Promise<{ reason: string; message: string }> }).lost.then((info) => {
+    lost = true;
+    const pending = Array.from(callbacks);
+    callbacks.clear();
+    for (const callback of pending) callback(info as unknown as GPUDeviceLostInfo);
+  });
+  return {
+    device: device as GPUDevice,
+    adapter: adapter as GPUAdapter,
+    get lost(): boolean {
+      return lost;
+    },
+    release: vi.fn(() => {
+      options.onRelease?.();
+    }),
+    onLost(callback: (info: GPUDeviceLostInfo) => void): () => void {
+      if (lost) {
+        callback({ reason: 'unknown', message: 'lost' } as unknown as GPUDeviceLostInfo);
+        return () => { /* already lost */ };
+      }
+      callbacks.add(callback);
+      return () => {
+        callbacks.delete(callback);
+      };
+    },
+  };
+}
+
 describe('Renderer', () => {
   let mock: MockGPUObjects;
   let video: HTMLVideoElement;
   let canvas: HTMLCanvasElement;
+  /** Lease returned by the default acquireGPUDevice mock for each test. */
+  let defaultLease: ReturnType<typeof createMockLease>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -109,8 +153,8 @@ describe('Renderer', () => {
       close = vi.fn();
     });
 
-    mockClaimPreWarmedDevice.mockReturnValue(null);
-    mockRequestGPUDevice.mockResolvedValue({ device: mock.device as unknown as GPUDevice, adapter: mock.adapter as unknown as GPUAdapter });
+    defaultLease = createMockLease(mock.device, mock.adapter);
+    mockAcquireGPUDevice.mockResolvedValue(defaultLease);
     mockInvalidatePreWarm.mockImplementation(() => {});
     mockGetPreWarmer.mockReturnValue({ warm: vi.fn().mockResolvedValue(undefined) });
     mockParamsEqual.mockReturnValue(false);
@@ -141,31 +185,21 @@ describe('Renderer', () => {
   }
 
   describe('create()', () => {
-    it('claims prewarmed device when available', async () => {
-      mockClaimPreWarmedDevice.mockReturnValue(mock.device as unknown as GPUDevice);
+    it('acquires a shared GPU device lease', async () => {
       const r = await createRenderer();
-      expect(mockClaimPreWarmedDevice).toHaveBeenCalled();
-      expect(mockRequestGPUDevice).not.toHaveBeenCalled();
-      r.destroy();
-    });
-
-    it('falls back to requestGPUDevice when no prewarmed device', async () => {
-      mockClaimPreWarmedDevice.mockReturnValue(null);
-      const r = await createRenderer();
-      expect(mockRequestGPUDevice).toHaveBeenCalled();
+      expect(mockAcquireGPUDevice).toHaveBeenCalledTimes(1);
       r.destroy();
     });
 
     it('waits for video loadeddata when readyState < HAVE_FUTURE_DATA', async () => {
       const slowVideo = createMockVideo({ readyState: HAVE_NOTHING });
-      mockClaimPreWarmedDevice.mockReturnValue(mock.device as unknown as GPUDevice);
 
       const createPromise = createRenderer({ video: slowVideo });
-      expect(mockClaimPreWarmedDevice).not.toHaveBeenCalled();
+      expect(mockAcquireGPUDevice).not.toHaveBeenCalled();
 
       slowVideo.dispatchEvent(new Event('loadeddata'));
       const r = await createPromise;
-      expect(mockClaimPreWarmedDevice).toHaveBeenCalled();
+      expect(mockAcquireGPUDevice).toHaveBeenCalled();
       r.destroy();
     });
 
@@ -195,9 +229,8 @@ describe('Renderer', () => {
       await expect(createRenderer()).rejects.toThrow(RendererInitializationError);
     });
 
-    it('throws RendererInitializationError when requestGPUDevice fails', async () => {
-      mockClaimPreWarmedDevice.mockReturnValue(null);
-      mockRequestGPUDevice.mockRejectedValue(new Error('WebGPU not supported'));
+    it('throws RendererInitializationError when acquireGPUDevice fails', async () => {
+      mockAcquireGPUDevice.mockRejectedValue(new Error('WebGPU not supported'));
       await expect(createRenderer()).rejects.toThrow(RendererInitializationError);
     });
 
@@ -251,11 +284,39 @@ describe('Renderer', () => {
       expect(mockInvalidatePreWarm).toHaveBeenCalled();
     });
 
-    it('destroys the GPU device', async () => {
+    it('releases the device lease instead of destroying the device directly', async () => {
       const r = await createRenderer();
       r.destroy();
+      expect(defaultLease.release).toHaveBeenCalled();
       const dev = mock.device as unknown as { destroy: ReturnType<typeof vi.fn> };
-      expect(dev.destroy).toHaveBeenCalled();
+      expect(dev.destroy).not.toHaveBeenCalled();
+    });
+
+    it('releasing the lease does not destroy a device another lease still holds', async () => {
+      let refCount = 0;
+      const sharedDevice = mock.device;
+      const makeSharedLease = () => {
+        refCount += 1;
+        return createMockLease(sharedDevice, mock.adapter, {
+          onRelease: () => {
+            refCount -= 1;
+            if (refCount === 0) (sharedDevice.destroy as unknown as () => void)();
+          },
+        });
+      };
+
+      const rendererLease = makeSharedLease(); // renderer's lease (refCount 1)
+      mockAcquireGPUDevice.mockResolvedValueOnce(rendererLease);
+      const r = await createRenderer();
+      const otherLease = makeSharedLease(); // another consumer (refCount 2)
+
+      r.destroy();
+
+      expect(rendererLease.release).toHaveBeenCalled();
+      expect(sharedDevice.destroy).not.toHaveBeenCalled();
+
+      otherLease.release();
+      expect(sharedDevice.destroy).toHaveBeenCalledTimes(1);
     });
 
     it('is idempotent', async () => {
@@ -268,38 +329,62 @@ describe('Renderer', () => {
   describe('device loss recovery', () => {
     it('recovers when device.lost reason !== "destroyed"', async () => {
       const r = await createRenderer();
-      mockRequestGPUDevice.mockClear();
+      mockAcquireGPUDevice.mockClear();
       mock.deviceLostDeferred.resolve({ reason: 'unknown', message: 'lost' });
       await Promise.resolve(); await Promise.resolve();
-      expect(mockRequestGPUDevice).toHaveBeenCalled();
+      expect(mockAcquireGPUDevice).toHaveBeenCalled();
+      r.destroy();
+    });
+
+    it('releases the old lease and acquires a fresh one during recovery', async () => {
+      const r = await createRenderer();
+      const oldLease = defaultLease;
+      const newLease = createMockLease(mock.device, mock.adapter, {});
+      mockAcquireGPUDevice.mockResolvedValueOnce(newLease);
+
+      mock.deviceLostDeferred.resolve({ reason: 'unknown', message: 'lost' });
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+
+      expect(oldLease.release).toHaveBeenCalled();
+      expect(mockAcquireGPUDevice).toHaveBeenCalledTimes(2);
       r.destroy();
     });
 
     it('does NOT recover when reason is "destroyed"', async () => {
       const r = await createRenderer();
-      mockRequestGPUDevice.mockClear();
+      mockAcquireGPUDevice.mockClear();
       mock.deviceLostDeferred.resolve({ reason: 'destroyed', message: 'destroyed' });
       await Promise.resolve(); await Promise.resolve();
-      expect(mockRequestGPUDevice).not.toHaveBeenCalled();
+      expect(mockAcquireGPUDevice).not.toHaveBeenCalled();
       r.destroy();
     });
 
+    it('does not recover after an intentional destroy', async () => {
+      const r = await createRenderer();
+      mockAcquireGPUDevice.mockClear();
+      r.destroy();
+      mock.deviceLostDeferred.resolve({ reason: 'destroyed', message: 'destroyed by release' });
+      await Promise.resolve(); await Promise.resolve();
+      expect(mockAcquireGPUDevice).not.toHaveBeenCalled();
+      expect(defaultLease.release).toHaveBeenCalled();
+    });
+
     it('prevents overlapping recovery', async () => {
-      let resolveReq: (v: unknown) => void;
-      const hangingReq = new Promise<unknown>((res) => { resolveReq = res; });
+      let resolveReq!: (v: GpuDeviceLease) => void;
+      const hangingReq = new Promise<GpuDeviceLease>((res) => { resolveReq = res; });
 
       const r = await createRenderer();
-      mockRequestGPUDevice.mockClear();
-      mockRequestGPUDevice.mockReturnValue(hangingReq);
+      mockAcquireGPUDevice.mockClear();
+      mockAcquireGPUDevice.mockReturnValue(hangingReq);
 
       mock.deviceLostDeferred.resolve({ reason: 'unknown', message: 'first' });
       await Promise.resolve();
       mock.deviceLostDeferred.resolve({ reason: 'unknown', message: 'second' });
       await Promise.resolve();
 
-      expect(mockRequestGPUDevice).toHaveBeenCalledTimes(1);
+      expect(mockAcquireGPUDevice).toHaveBeenCalledTimes(1);
 
-      resolveReq!({ device: mock.device, adapter: mock.adapter });
+      resolveReq(createMockLease(mock.device, mock.adapter, {}));
       await Promise.resolve(); await Promise.resolve();
       r.destroy();
     });

@@ -3,6 +3,8 @@ import { RendererInitializationError, RendererRuntimeError } from '@core/errors'
 import { t } from '@utils/i18n';
 
 import * as GPUDeviceManager from '@core/gpu/gpu-device-manager';
+import type { GpuDeviceLease } from '@core/gpu/gpu-device-manager';
+import { gpuResourceCache } from '@core/gpu/gpu-resource-cache';
 import { GpuTimestampProfiler, type ProfilerSnapshot } from '@core/gpu/gpu-timestamp-profiler';
 import { buildEffectPipelines, paramsEqual } from '@core/gpu/pipeline-builder';
 import fullscreenTexturedQuadWGSL from '@shaders/fullscreen-textured-quad.wgsl';
@@ -58,6 +60,10 @@ export class Renderer {
 
   // --- WebGPU objects ---
   private device!: GPUDevice;
+  /** Ref-counted lease on the shared GPU device backing this renderer. */
+  private lease: GpuDeviceLease | null = null;
+  /** Unsubscribe handle for the active lease's device-loss subscription. */
+  private leaseLostUnsubscribe: (() => void) | null = null;
   private context!: GPUCanvasContext;
   private presentationFormat!: GPUTextureFormat;
   /** Intermediate texture used to copy image data from video frames */
@@ -121,13 +127,10 @@ export class Renderer {
       // Use pre-warmed adapter/device if available (pre-requested on content script load)
       this.onProgress?.(t('initGpu', '⏳ Initializing GPU...'));
 
-      const claimedDevice = GPUDeviceManager.claimPreWarmedDevice();
-      if (claimedDevice) {
-        this.device = claimedDevice;
-      } else {
-        const { device } = await GPUDeviceManager.requestGPUDevice();
-        this.device = device;
-      }
+      // Acquire a ref-counted lease on the shared GPU device. A pre-warmed
+      // device is claimed here and concurrent renderers share one device.
+      this.lease = await GPUDeviceManager.acquireGPUDevice();
+      this.device = this.lease.device;
 
       // Create the optional GPU timestamp profiler on the acquired device.
       // GpuTimestampProfiler.create() returns null when the timestamp-query
@@ -135,19 +138,8 @@ export class Renderer {
       // this stays a no-op on unsupported hardware.
       await this.createProfiler();
 
-      // Listen for device loss events and attempt automatic recovery
-      this.device.lost.then((info) => {
-        // If the renderer has already been destroyed, no action needed
-        if (this.destroyed) return;
-
-        console.warn(`[Anime4KWebExt] GPU device lost: ${info.reason} - ${info.message}`);
-
-        // Attempt automatic recovery (only when not intentionally destroyed)
-        if (info.reason !== 'destroyed' && !this.isRecovering) {
-          console.log('[Anime4KWebExt] Attempting to recover from device loss...');
-          this.recoverFromDeviceLoss();
-        }
-      });
+      // Observe loss through the lease and attempt automatic recovery.
+      this.watchDeviceLoss();
 
       // Detect whether direct texture copy from VideoFrame is supported (test on current device to avoid creating redundant devices)
       this.useImageBitmapFallback = !await this.detectVideoFrameSupport();
@@ -213,6 +205,42 @@ export class Renderer {
       profiler?.destroy();
       this.profiler = null;
     }
+  }
+
+  /**
+   * Subscribes to device-loss notifications for the current lease and triggers
+   * automatic recovery. Replaces any previous subscription. Loss is observed
+   * through the lease so the manager can attach just one `device.lost` listener
+   * per shared device.
+   */
+  private watchDeviceLoss(): void {
+    this.leaseLostUnsubscribe?.();
+    this.leaseLostUnsubscribe = null;
+    const lease = this.lease;
+    if (!lease) return;
+    this.leaseLostUnsubscribe = lease.onLost((info) => {
+      // If the renderer has already been destroyed, no action needed.
+      if (this.destroyed) return;
+
+      console.warn(`[Anime4KWebExt] GPU device lost: ${info.reason} - ${info.message}`);
+
+      // Attempt automatic recovery (only when not intentionally destroyed).
+      if (info.reason !== 'destroyed' && !this.isRecovering) {
+        console.log('[Anime4KWebExt] Attempting to recover from device loss...');
+        this.recoverFromDeviceLoss();
+      }
+    });
+  }
+
+  /**
+   * Releases the current device lease and disconnects its loss subscription.
+   * The shared device is destroyed only when no other lease remains.
+   */
+  private releaseLease(): void {
+    this.leaseLostUnsubscribe?.();
+    this.leaseLostUnsubscribe = null;
+    this.lease?.release();
+    this.lease = null;
   }
 
   /**
@@ -705,18 +733,18 @@ export class Renderer {
         this.animationFrameId = null;
       }
 
-      // Re-request GPU adapter and device via GPUDeviceManager
-      const { device } = await GPUDeviceManager.requestGPUDevice();
-      this.device = device;
+      // Release the old lease (the shared device is destroyed only when no
+      // other lease remains) and drop its per-device resource cache.
+      const oldDevice = this.device;
+      this.releaseLease();
+      gpuResourceCache.release(oldDevice);
 
-      // Set up device loss listener for the new device
-      this.device.lost.then((info) => {
-        if (this.destroyed) return;
-        console.warn(`[Anime4KWebExt] GPU device lost: ${info.reason} - ${info.message}`);
-        if (info.reason !== 'destroyed' && !this.isRecovering) {
-          this.recoverFromDeviceLoss();
-        }
-      });
+      // Acquire a lease on the replacement shared device.
+      this.lease = await GPUDeviceManager.acquireGPUDevice();
+      this.device = this.lease.device;
+
+      // Set up device loss listener for the new lease/device
+      this.watchDeviceLoss();
 
       // Re-create the profiler on the new device: the old device's profiler
       // resources were lost along with the device.
@@ -733,6 +761,15 @@ export class Renderer {
 
       // Invalidate shader pre-warm cache — the new device has a separate shader cache
       GPUDeviceManager.invalidatePreWarm();
+
+      // The replacement device may have different VideoFrame copy behavior.
+      // Preserve an active DRM canvas fallback, which takes precedence.
+      if (!this.useDrmCanvasFallback) {
+        this.useImageBitmapFallback = !await this.detectVideoFrameSupport();
+        if (this.useImageBitmapFallback) {
+          console.log('[Anime4KWebExt] Renderer: Using ImageBitmap fallback for copying video frames.');
+        }
+      }
 
       // Rebuild resources and pipelines
       this.createResources();
@@ -790,10 +827,12 @@ export class Renderer {
       this.videoFrameTexture?.destroy();
       // Disassociate the canvas from the GPU device — critical for subsequent reinitialization
       this.context?.unconfigure();
-      // Invalidate shader pre-warm cache since the device is being destroyed
+      // Invalidate the shader pre-warm cache; the next device has a separate cache.
       GPUDeviceManager.invalidatePreWarm();
-      // Proactively destroy the device, which will trigger the device.lost Promise
-      this.device?.destroy();
+      // Release our lease. The shared device is destroyed only once the last
+      // holder releases it. `destroyed` is already set, so the loss this may
+      // trigger does not re-enter the recovery path.
+      this.releaseLease();
       console.log('[Anime4KWebExt] Renderer destroyed.');
     } catch (error) {
       console.error('[Anime4KWebExt] Error during renderer destruction:', error);
