@@ -431,4 +431,138 @@ describe('Renderer', () => {
       expect(() => r.destroy()).not.toThrow();
     });
   });
+
+  describe('DRM/EME canvas-2D fallback (differentiator)', () => {
+    // A recording OffscreenCanvas so tests can assert the 2D intermediary path was used
+    // and control whether frame validation sees black / tainted pixels.
+    let imageData: Uint8ClampedArray;
+    let imageDataError: Error | null;
+    let recordingCanvases: RecordingOffscreenCanvas[];
+    let queueCopy: ReturnType<typeof vi.fn>;
+
+    class RecordingOffscreenCanvas {
+      width: number;
+      height: number;
+      ctx: {
+        fillRect: ReturnType<typeof vi.fn>;
+        drawImage: ReturnType<typeof vi.fn>;
+        getImageData: ReturnType<typeof vi.fn>;
+      };
+      constructor(w: number, h: number) {
+        this.width = w;
+        this.height = h;
+        this.ctx = {
+          fillRect: vi.fn(),
+          drawImage: vi.fn(),
+          getImageData: vi.fn(() => {
+            if (imageDataError) throw imageDataError;
+            return { data: imageData };
+          }),
+        };
+        recordingCanvases.push(this);
+      }
+      getContext(_type: string) {
+        return this.ctx;
+      }
+    }
+
+    beforeEach(() => {
+      imageData = new Uint8ClampedArray([100, 100, 100, 255]);
+      imageDataError = null;
+      recordingCanvases = [];
+      vi.stubGlobal('OffscreenCanvas', RecordingOffscreenCanvas);
+      queueCopy = mock.device.queue.copyExternalImageToTexture as ReturnType<typeof vi.fn>;
+    });
+
+    function throwBackResourceFor(match: (source: unknown) => boolean): void {
+      queueCopy.mockImplementation((src: { source?: unknown }) => {
+        if (match(src?.source)) {
+          const err = new Error("Source texture doesn't have back resource");
+          err.name = 'OperationError';
+          throw err;
+        }
+      });
+    }
+
+    async function retryFirstFrame(video: HTMLVideoElement): Promise<() => Promise<void>> {
+      const rvfc = video.requestVideoFrameCallback as ReturnType<typeof vi.fn>;
+      await vi.waitFor(() => expect(rvfc).toHaveBeenCalled());
+      return rvfc.mock.calls.at(-1)![0] as () => Promise<void>;
+    }
+
+    it('switches to a canvas-2D intermediary when direct copy reports no back resource', async () => {
+      const drmVideo = createMockVideo();
+      throwBackResourceFor((source) => source === drmVideo);
+
+      const onError = vi.fn();
+      const r = await createRenderer({ video: drmVideo, onError });
+
+      const retry = await retryFirstFrame(drmVideo);
+      await retry();
+
+      const drmCanvas = recordingCanvases.find((c) => c.width === 1920 && c.height === 1080);
+      expect(drmCanvas).toBeDefined();
+      expect(drmCanvas!.ctx.drawImage).toHaveBeenCalledWith(drmVideo, 0, 0);
+      expect(queueCopy).toHaveBeenCalledWith(
+        expect.objectContaining({ source: drmCanvas }),
+        expect.anything(),
+        expect.anything(),
+      );
+      expect(onError).not.toHaveBeenCalled();
+
+      r.destroy();
+    });
+
+    it('rejects an all-black DRM canvas frame (hardware DRM / Widevine L1)', async () => {
+      imageData = new Uint8ClampedArray([0, 0, 0, 255]);
+      const drmVideo = createMockVideo();
+      throwBackResourceFor((source) => source === drmVideo);
+
+      const onError = vi.fn();
+      const r = await createRenderer({ video: drmVideo, onError });
+
+      const retry = await retryFirstFrame(drmVideo);
+      await retry();
+
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError.mock.calls[0][0].message).toMatch(/DRM|copy protection/);
+
+      r.destroy();
+    });
+
+    it('rejects a tainted DRM canvas whose getImageData throws', async () => {
+      imageDataError = Object.assign(new Error('Tainted canvas'), { name: 'SecurityError' });
+      const drmVideo = createMockVideo();
+      throwBackResourceFor((source) => source === drmVideo);
+
+      const onError = vi.fn();
+      const r = await createRenderer({ video: drmVideo, onError });
+
+      const retry = await retryFirstFrame(drmVideo);
+      await retry();
+
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError.mock.calls[0][0].message).toMatch(/DRM|copy protection/);
+
+      r.destroy();
+    });
+
+    it('reports an unrecoverable error when the canvas-2D fallback also fails', async () => {
+      const drmVideo = createMockVideo();
+      throwBackResourceFor(
+        (source) => source === drmVideo || source instanceof RecordingOffscreenCanvas,
+      );
+
+      const onError = vi.fn();
+      const r = await createRenderer({ video: drmVideo, onError });
+
+      const retry = await retryFirstFrame(drmVideo);
+      await retry();
+
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError.mock.calls[0][0].message).toContain('Canvas 2D fallback failed');
+
+      r.destroy();
+    });
+  });
 });

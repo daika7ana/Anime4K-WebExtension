@@ -12,7 +12,134 @@ const TEST_WIDTH = 1920;  // Test input width (1080p)
 const TEST_HEIGHT = 1080; // Test input height
 const TARGET_WIDTH = 3840;  // Target 4K
 const TARGET_HEIGHT = 2160;
-const TARGET_FRAME_TIME_24FPS = 1000 / 24; // ~41.67ms
+
+/** Default target frame rate for the sustainability budget (24fps ≈ 41.67ms/frame). */
+const DEFAULT_BENCHMARK_FPS_TARGET = 24;
+const TARGET_FRAME_TIME_24FPS = 1000 / DEFAULT_BENCHMARK_FPS_TARGET; // ~41.67ms
+
+/**
+ * ── Benchmark → performance-tier policy ─────────────────────────────────
+ *
+ * The benchmark measures per-frame GPU time (ms) for each performance tier.
+ * A tier is considered sustainable at the target frame rate when BOTH hold:
+ *
+ *   1. every measured frame fits the frame budget:  max(samples) < budget
+ *   2. the average frame keeps 10% headroom:        avg(samples) < 0.9 * budget
+ *
+ *   where budget = 1000 / fpsTarget   (default fpsTarget = 24 → ≈ 41.67 ms)
+ *
+ * Both inequalities are strict: a tier whose max frame time equals the budget
+ * exactly, or whose average equals 0.9 * budget exactly, is rejected.
+ *
+ * `recommendTierFromSamples` returns the heaviest qualifying tier (see
+ * `PERFORMANCE_TIER_ORDER`). When no tested tier qualifies — e.g. every tier is
+ * too slow, or no finite positive samples were recorded — it returns `null`.
+ * Callers must then fall back to `FALLBACK_PERFORMANCE_TIER`, the lightest
+ * (safest) tier, which preserves the historical default of recommending the
+ * `performance` tier when nothing better is sustainable.
+ *
+ * Non-finite (NaN / ±Infinity) and non-positive samples are ignored before
+ * aggregation so a single bad timing cannot disqualify an otherwise
+ * sustainable tier (and empty / all-invalid sets never qualify).
+ * ────────────────────────────────────────────────────────────────────────
+ */
+
+/**
+ * Ordered performance tiers from lightest → heaviest. This is the single
+ * source of truth for tier ordering, shared by the benchmark loop and the
+ * pure recommendation policy.
+ */
+export const PERFORMANCE_TIER_ORDER = [
+    'performance',
+    'balanced',
+    'quality',
+    'ultra',
+] as const satisfies readonly PerformanceTier[];
+
+/** Deterministic fallback used when no tier satisfies the budget policy. */
+export const FALLBACK_PERFORMANCE_TIER: PerformanceTier = 'performance';
+
+/** Fraction of the frame budget the average frame time must stay below. */
+export const AVG_FRAME_BUDGET_RATIO = 0.9;
+
+/** Options for the benchmark → tier policy. */
+export interface TierRecommendationOptions {
+    /** Target frames per second. Defaults to 24. Non-positive/non-finite values fall back to the default. */
+    fpsTarget?: number;
+}
+
+/** Per-frame timing samples (ms) keyed by the tier that produced them. Tiers may be omitted when untested. */
+export type TierFrameSamples = Partial<Record<PerformanceTier, readonly number[]>>;
+
+/**
+ * Compute the per-frame time budget in milliseconds.
+ * @param opts Optional `fpsTarget` override.
+ * @returns `1000 / fpsTarget`, defaulting to 24fps (≈ 41.67 ms) for invalid input.
+ */
+export function computeFrameBudget(opts?: TierRecommendationOptions): number {
+    const fpsTarget = opts?.fpsTarget;
+    const target =
+        typeof fpsTarget === 'number' && Number.isFinite(fpsTarget) && fpsTarget > 0
+            ? fpsTarget
+            : DEFAULT_BENCHMARK_FPS_TARGET;
+    return 1000 / target;
+}
+
+/**
+ * Filter out samples that cannot contribute to a meaningful average: non-finite
+ * (NaN, ±Infinity) and non-positive (<= 0) values are dropped.
+ */
+export function sanitizeFrameSamples(samples: readonly number[]): number[] {
+    return samples.filter((sample) => Number.isFinite(sample) && sample > 0);
+}
+
+/**
+ * Pure predicate: does one tier's sample set satisfy both budget conditions?
+ * @returns `false` when no valid samples remain.
+ */
+export function tierMeetsBudget(
+    samples: readonly number[],
+    opts?: TierRecommendationOptions
+): boolean {
+    const valid = sanitizeFrameSamples(samples);
+    if (valid.length === 0) return false;
+
+    const budget = computeFrameBudget(opts);
+    let max = -Infinity;
+    let sum = 0;
+    for (const sample of valid) {
+        if (sample > max) max = sample;
+        sum += sample;
+    }
+    const avg = sum / valid.length;
+
+    return max < budget && avg < AVG_FRAME_BUDGET_RATIO * budget;
+}
+
+/**
+ * Recommend a performance tier from benchmark samples.
+ *
+ * Returns the heaviest tier (ultra → performance) whose samples satisfy BOTH
+ * `max(samples) < 1000 / fpsTarget` and `avg(samples) < 0.9 * 1000 / fpsTarget`.
+ * Returns `null` when no tested tier qualifies; callers should use
+ * `FALLBACK_PERFORMANCE_TIER`.
+ *
+ * @param samplesByTier Per-frame timings keyed by tier. Missing/empty tiers are skipped.
+ * @param opts Optional `fpsTarget` override (default 24).
+ */
+export function recommendTierFromSamples(
+    samplesByTier: TierFrameSamples,
+    opts?: TierRecommendationOptions
+): PerformanceTier | null {
+    for (let i = PERFORMANCE_TIER_ORDER.length - 1; i >= 0; i--) {
+        const tier = PERFORMANCE_TIER_ORDER[i];
+        const samples = samplesByTier[tier];
+        if (samples && tierMeetsBudget(samples, opts)) {
+            return tier;
+        }
+    }
+    return null;
+}
 
 /**
  * Check if the GPU device is still valid
@@ -59,7 +186,8 @@ async function safeDestroyPipelines(device: GPUDevice, pipelines: DestroyablePip
 export async function runGPUBenchmark(
     onProgress?: (progress: BenchmarkProgress) => void
 ): Promise<GPUBenchmarkResult> {
-    const tiers: PerformanceTier[] = ['performance', 'balanced', 'quality', 'ultra'];
+    const tiers = PERFORMANCE_TIER_ORDER;
+    const samplesByTier: TierFrameSamples = {};
     const scores: Record<PerformanceTier, number> = {
         performance: Infinity,
         balanced: Infinity,
@@ -117,8 +245,6 @@ export async function runGPUBenchmark(
     for (let j = 3; j < testData.length; j += 4) {
         testData[j] = 255;
     }
-
-    let recommendedTier: PerformanceTier = 'performance';
 
     // Dynamically import anime4k-webgpu-async module
     console.log('[GPUBenchmark] Loading anime4k-webgpu-async module...');
@@ -193,7 +319,7 @@ export async function runGPUBenchmark(
             const effects = resolveEffectChain('A+A', tier);
 
             // Run the test
-            const { avgTime, maxTime } = await runWithTimeout(
+            const { avgTime, maxTime, samples } = await runWithTimeout(
                 runEffectChainTest(device, inputTexture, effects, Anime4K),
                 TEST_TIMEOUT_MS
             );
@@ -203,13 +329,8 @@ export async function runGPUBenchmark(
 
             scores[tier] = avgTime;
             maxScores[tier] = maxTime;
+            samplesByTier[tier] = samples;
             console.log(`[GPUBenchmark] ${tier}: avg=${avgTime.toFixed(2)}ms, max=${maxTime.toFixed(2)}ms per frame`);
-
-            // If it can sustain 24fps stably, this tier is usable
-            // Requirement: max frame time < target frame time, avg frame time < target * 0.9
-            if (maxTime < TARGET_FRAME_TIME_24FPS && avgTime < TARGET_FRAME_TIME_24FPS * 0.9) {
-                recommendedTier = tier;
-            }
 
             // Safely destroy texture
             try {
@@ -259,6 +380,11 @@ export async function runGPUBenchmark(
         throw new Error('All benchmark tests failed');
     }
 
+    // Apply the formal benchmark → tier policy (see recommendTierFromSamples).
+    // `null` means no tested tier met the budget; fall back to the lightest tier.
+    const recommendedTier: PerformanceTier =
+        recommendTierFromSamples(samplesByTier) ?? FALLBACK_PERFORMANCE_TIER;
+
     // Cleanup resources
     intentionalDestroy = true;
     device.destroy();
@@ -282,14 +408,14 @@ export async function runGPUBenchmark(
 
 /**
  * Run effect chain test
- * @returns Average frame time and max frame time
+ * @returns Average frame time, max frame time, and the raw stable per-frame samples
  */
 async function runEffectChainTest(
     device: GPUDevice,
     inputTexture: GPUTexture,
     effects: EnhancementEffect[],
     Anime4K: typeof import('anime4k-webgpu-async')
-): Promise<{ avgTime: number; maxTime: number }> {
+): Promise<{ avgTime: number; maxTime: number; samples: number[] }> {
     // Build pipelines
     const pipelines: DestroyablePipeline[] = [];
     let currentTexture: GPUTexture = inputTexture;
@@ -425,7 +551,7 @@ async function runEffectChainTest(
     // Safely cleanup pipelines (wait for sync before destroying)
     await safeDestroyPipelines(device, pipelines);
 
-    return { avgTime, maxTime };
+    return { avgTime, maxTime, samples: stableFrameTimes };
 }
 
 /**

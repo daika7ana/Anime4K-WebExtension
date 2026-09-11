@@ -38,3 +38,21 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      - name: Test with coverage
+        run: pnpm exec vitest run --coverage
+
+      - name: Build extensions
+        run: pnpm build:chrome && pnpm build:firefox
+
+      - name: Check production bundle
+        run: pnpm run check:bundle
+
+      - name: Check version consistency
+        run: pnpm run check:version
+
+      - name: Install Chromium for WGSL verification
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Verify WGSL compilation
+        run: pnpm run verify:wgsl

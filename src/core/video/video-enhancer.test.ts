@@ -708,4 +708,134 @@ describe('VideoEnhancer', () => {
       });
     });
   });
+
+  describe('color grading (differentiator)', () => {
+    const COLOR_GRADING = {
+      enabled: true,
+      brightness: 0.2,
+      gamma: 1.3,
+      contrast: 1.1,
+      saturation: 0.9,
+      vibrance: 0.4,
+      exposure: 0.5,
+    };
+
+    function settingsWithColorGrading(colorGrading: unknown = COLOR_GRADING) {
+      return {
+        selectedModeId: 'builtin-mode-a',
+        enhancementModes: [
+          { id: 'builtin-mode-a', baseMode: 'A', name: 'Mode A', isBuiltIn: true },
+        ],
+        targetResolutionSetting: 'x2',
+        performanceTier: 'balanced',
+        enableCrossOriginFix: false,
+        colorGrading,
+      };
+    }
+
+    function createdEffects(): any[] {
+      return (Renderer.create as ReturnType<typeof vi.fn>).mock.calls[0][0].effects;
+    }
+
+    it('appends a ColorAdjust effect with the configured grade to the end of the chain', async () => {
+      (getSettings as ReturnType<typeof vi.fn>).mockResolvedValue(settingsWithColorGrading());
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      const effects = createdEffects();
+      const gradeEffect = effects[effects.length - 1];
+      expect(gradeEffect.className).toBe('ColorAdjust');
+      expect(gradeEffect.params).toEqual({
+        brightness: 0.2,
+        gamma: 1.3,
+        contrast: 1.1,
+        saturation: 0.9,
+        vibrance: 0.4,
+        exposure: 0.5,
+      });
+      // Base chain effect must still precede the grading stage.
+      expect(effects.length).toBeGreaterThan(1);
+      expect(effects[0].className).toBe('ClampHighlights');
+
+      enhancer.destroy();
+    });
+
+    it('does not append ColorAdjust when color grading is disabled', async () => {
+      (getSettings as ReturnType<typeof vi.fn>).mockResolvedValue(
+        settingsWithColorGrading({ ...COLOR_GRADING, enabled: false }),
+      );
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      expect(createdEffects().some((e) => e.className === 'ColorAdjust')).toBe(false);
+
+      enhancer.destroy();
+    });
+
+    it('does not append ColorAdjust when settings omit colorGrading entirely', async () => {
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      expect(createdEffects().some((e) => e.className === 'ColorAdjust')).toBe(false);
+
+      enhancer.destroy();
+    });
+
+    it('forwards color grading through updateSettings to updateConfiguration', async () => {
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      await enhancer.updateSettings(settingsWithColorGrading() as any);
+
+      const updateCall = (mockRenderer.updateConfiguration as ReturnType<typeof vi.fn>).mock.calls.at(-1)!;
+      const effects = updateCall[0].effects;
+      const gradeEffect = effects[effects.length - 1];
+      expect(gradeEffect.className).toBe('ColorAdjust');
+      expect(gradeEffect.params.saturation).toBe(0.9);
+      expect(gradeEffect.params.exposure).toBe(0.5);
+
+      enhancer.destroy();
+    });
+  });
+
+  describe('DRM/EME detection (differentiator)', () => {
+    it('refuses to initialize when the video element has mediaKeys (EME)', async () => {
+      Object.defineProperty(video, 'mediaKeys', { value: {}, configurable: true });
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      expect(Renderer.create).not.toHaveBeenCalled();
+      expect(video.hasAttribute('data-anime4k-applied')).toBe(false);
+      expect(document.body.textContent).toContain('DRM');
+
+      enhancer.destroy();
+    });
+
+    it('allows initialization when mediaKeys is absent', async () => {
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      expect(Renderer.create).toHaveBeenCalled();
+
+      enhancer.destroy();
+    });
+
+    it('shows the DRM-specific message when the renderer reports a copy-protection error', async () => {
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      const onError = (Renderer.create as ReturnType<typeof vi.fn>).mock.calls[0][0].onError;
+      expect(onError).toBeDefined();
+      await onError(
+        new Error('DRM detected. Video enhancement is not supported for this content due to copy protection.'),
+      );
+
+      expect(document.body.textContent).toContain('DRM copy protection');
+
+      enhancer.destroy();
+    });
+  });
 });

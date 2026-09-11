@@ -10,6 +10,7 @@ import type { EnhancementMode, EnhancementEffect, CustomMode, PerformanceTier } 
 import { renderParamSliders } from './param-sliders';
 import { t } from '@utils/i18n';
 import { downloadJSON, openFile } from './import-export';
+import { formatValidationIssues, parseAndValidateModesImport } from '@utils/validation';
 import { showToast } from '../common/toast';
 
 // --- Drag and Drop State (module-local — no other panel touches it) ---
@@ -448,33 +449,20 @@ export function initModesPanel(
   importModesBtn.addEventListener('click', async () => {
     try {
       const json = await openFile();
-      const importedRaw: unknown = JSON.parse(json);
+      const result = parseAndValidateModesImport(json);
 
-      if (!Array.isArray(importedRaw)) throw new Error('Invalid format: not an array');
-
-      const newModes: CustomMode[] = [];
-      for (const item of importedRaw) {
-        if (typeof item !== 'object' || item === null) {
-          console.warn('Skipping invalid mode object on import:', item);
-          continue;
-        }
-        const mode = item as Record<string, unknown>;
-        if (typeof mode.name !== 'string' || !Array.isArray(mode.effects)) {
-          console.warn('Skipping invalid mode object on import:', mode);
-          continue;
-        }
-
-        const newMode: CustomMode = {
-          id: `custom-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-          name: mode.name,
-          isBuiltIn: false,
-          effects: mode.effects as EnhancementEffect[],
-        };
-        newModes.push(newMode);
+      // Atomic: reject the whole payload rather than partially applying valid modes.
+      if (!result.ok) {
+        console.error('Import validation failed:', result.issues);
+        showToast(
+          `${t('importError', 'Import failed: invalid format or file error.')} (${formatValidationIssues(result.issues)})`,
+          'error',
+        );
+        return;
       }
 
       const state = ctx.getState();
-      const syncedNewModes = synchronizeEffectsForCustomModes(newModes);
+      const syncedNewModes = synchronizeEffectsForCustomModes(result.value);
       const allCustomModes = [...state.customModes, ...syncedNewModes];
       state.customModes = allCustomModes;
       state.enhancementModes = [

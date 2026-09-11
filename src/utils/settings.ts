@@ -15,6 +15,15 @@ import type {
 } from '../types';
 import { AVAILABLE_EFFECTS } from './effects-map';
 import { resolveEffectChain } from './effect-chain-templates';
+import {
+  DEFAULT_COLOR_GRADING,
+  isPerformanceTier,
+  isValidResolutionSetting,
+  sanitizeColorGrading,
+  sanitizeCustomModes,
+  sanitizeWhitelist,
+  validateGPUBenchmarkResult,
+} from './validation';
 
 // ===== Settings Cache =====
 let cachedSettings: Anime4KWebExtSettings | null = null;
@@ -46,15 +55,7 @@ const DEFAULT_SYNCED_SETTINGS: SyncedSettings = {
   enableCrossOriginFix: false,
   autoEnableOnWhitelist: false,
   enableHotkey: true,
-  colorGrading: {
-    enabled: false,
-    brightness: 0,
-    gamma: 1,
-    contrast: 1,
-    saturation: 1,
-    vibrance: 0,
-    exposure: 0,
-  },
+  colorGrading: { ...DEFAULT_COLOR_GRADING },
 };
 
 const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
@@ -89,6 +90,121 @@ export function synchronizeEffectsForCustomModes(modes: CustomMode[]): CustomMod
   });
 }
 
+function describeStoredType(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
+}
+
+function warnInvalidSetting(key: string, value: unknown): void {
+  console.warn(
+    `[Settings] Ignoring invalid stored value for "${key}" (${describeStoredType(value)}); using default.`,
+  );
+}
+
+function coerceBoolean(key: string, value: unknown, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  if (typeof value === 'boolean') return value;
+  warnInvalidSetting(key, value);
+  return fallback;
+}
+
+function coerceNonEmptyString(key: string, value: unknown, fallback: string): string {
+  if (value === undefined) return fallback;
+  if (typeof value === 'string' && value.trim() !== '') return value;
+  warnInvalidSetting(key, value);
+  return fallback;
+}
+
+function coerceResolutionSetting(value: unknown, fallback: string): string {
+  if (value === undefined) return fallback;
+  if (isValidResolutionSetting(value)) return value;
+  warnInvalidSetting('targetResolutionSetting', value);
+  return fallback;
+}
+
+function coercePerformanceTier(value: unknown, fallback: PerformanceTier): PerformanceTier {
+  if (value === undefined) return fallback;
+  if (isPerformanceTier(value)) return value;
+  warnInvalidSetting('performanceTier', value);
+  return fallback;
+}
+
+/**
+ * Normalize untrusted synced settings read from storage, falling back to
+ * defaults for any field that is missing, the wrong type, or out of range.
+ */
+export function normalizeSyncedSettings(data: Record<string, unknown>): SyncedSettings {
+  return {
+    selectedModeId: coerceNonEmptyString(
+      'selectedModeId',
+      data.selectedModeId,
+      DEFAULT_SYNCED_SETTINGS.selectedModeId,
+    ),
+    targetResolutionSetting: coerceResolutionSetting(
+      data.targetResolutionSetting,
+      DEFAULT_SYNCED_SETTINGS.targetResolutionSetting,
+    ),
+    whitelistEnabled: coerceBoolean(
+      'whitelistEnabled',
+      data.whitelistEnabled,
+      DEFAULT_SYNCED_SETTINGS.whitelistEnabled,
+    ),
+    whitelist: sanitizeWhitelist(data.whitelist),
+    customModes: sanitizeCustomModes(data.customModes),
+    enableCrossOriginFix: coerceBoolean(
+      'enableCrossOriginFix',
+      data.enableCrossOriginFix,
+      DEFAULT_SYNCED_SETTINGS.enableCrossOriginFix,
+    ),
+    autoEnableOnWhitelist: coerceBoolean(
+      'autoEnableOnWhitelist',
+      data.autoEnableOnWhitelist,
+      DEFAULT_SYNCED_SETTINGS.autoEnableOnWhitelist,
+    ),
+    enableHotkey: coerceBoolean(
+      'enableHotkey',
+      data.enableHotkey,
+      DEFAULT_SYNCED_SETTINGS.enableHotkey,
+    ),
+    colorGrading: sanitizeColorGrading(data.colorGrading),
+  };
+}
+
+/**
+ * Normalize untrusted local settings read from storage, falling back to
+ * defaults for any field that is missing, the wrong type, or out of range.
+ */
+export function normalizeLocalSettings(data: Record<string, unknown>): LocalSettings {
+  const benchmark = validateGPUBenchmarkResult(data.gpuBenchmarkResult);
+  if (
+    !benchmark.ok &&
+    data.gpuBenchmarkResult !== undefined &&
+    data.gpuBenchmarkResult !== null
+  ) {
+    console.warn('[Settings] Ignoring invalid stored gpuBenchmarkResult; using default.');
+  }
+  return {
+    performanceTier: coercePerformanceTier(
+      data.performanceTier,
+      DEFAULT_LOCAL_SETTINGS.performanceTier,
+    ),
+    gpuBenchmarkResult: benchmark.ok
+      ? benchmark.value
+      : DEFAULT_LOCAL_SETTINGS.gpuBenchmarkResult,
+    hasCompletedOnboarding: coerceBoolean(
+      'hasCompletedOnboarding',
+      data.hasCompletedOnboarding,
+      DEFAULT_LOCAL_SETTINGS.hasCompletedOnboarding,
+    ),
+    showDiagnostics: coerceBoolean(
+      'showDiagnostics',
+      data.showDiagnostics,
+      DEFAULT_LOCAL_SETTINGS.showDiagnostics,
+    ),
+  };
+}
+
 /**
  * Get synced settings (storage.sync)
  */
@@ -105,17 +221,7 @@ async function getSyncedSettings(): Promise<SyncedSettings> {
       'enableHotkey',
       'colorGrading',
     ], (data) => {
-      resolve({
-        selectedModeId: data.selectedModeId ?? DEFAULT_SYNCED_SETTINGS.selectedModeId,
-        targetResolutionSetting: data.targetResolutionSetting ?? DEFAULT_SYNCED_SETTINGS.targetResolutionSetting,
-        whitelistEnabled: data.whitelistEnabled ?? DEFAULT_SYNCED_SETTINGS.whitelistEnabled,
-        whitelist: data.whitelist ?? DEFAULT_SYNCED_SETTINGS.whitelist,
-        customModes: data.customModes ?? DEFAULT_SYNCED_SETTINGS.customModes,
-        enableCrossOriginFix: data.enableCrossOriginFix ?? DEFAULT_SYNCED_SETTINGS.enableCrossOriginFix,
-        autoEnableOnWhitelist: data.autoEnableOnWhitelist ?? DEFAULT_SYNCED_SETTINGS.autoEnableOnWhitelist,
-        enableHotkey: data.enableHotkey ?? DEFAULT_SYNCED_SETTINGS.enableHotkey,
-        colorGrading: data.colorGrading ?? DEFAULT_SYNCED_SETTINGS.colorGrading,
-      });
+      resolve(normalizeSyncedSettings(data));
     });
   });
 }
@@ -132,12 +238,7 @@ export async function getLocalSettings(): Promise<LocalSettings> {
       'hasCompletedOnboarding',
       'showDiagnostics',
     ], (data) => {
-      resolve({
-        performanceTier: data.performanceTier ?? DEFAULT_LOCAL_SETTINGS.performanceTier,
-        gpuBenchmarkResult: data.gpuBenchmarkResult ?? DEFAULT_LOCAL_SETTINGS.gpuBenchmarkResult,
-        hasCompletedOnboarding: data.hasCompletedOnboarding ?? DEFAULT_LOCAL_SETTINGS.hasCompletedOnboarding,
-        showDiagnostics: data.showDiagnostics ?? DEFAULT_LOCAL_SETTINGS.showDiagnostics,
-      });
+      resolve(normalizeLocalSettings(data));
     });
   });
 }

@@ -1,9 +1,19 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   synchronizeEffectsForCustomModes,
   getEffectsForMode,
+  getSettings,
+  getLocalSettings,
+  normalizeSyncedSettings,
+  normalizeLocalSettings,
   BUILTIN_MODES,
 } from './settings';
+
+// Capture the storage-change listener registered by settings.ts at import time.
+// Restoring mocks between tests can clear `mock.calls`, so hold the reference now.
+const capturedOnChanged = (
+  chrome.storage.onChanged.addListener as unknown as { mock: { calls: unknown[][] } }
+).mock.calls[0]?.[0] as (() => void) | undefined;
 import { AVAILABLE_EFFECTS } from './effects-map';
 import { resolveEffectChain } from './effect-chain-templates';
 import type { CustomMode, BuiltInMode, PerformanceTier } from '../types';
@@ -153,5 +163,156 @@ describe('getEffectsForMode', () => {
         expect(effects.length).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+describe('normalizeSyncedSettings', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('falls back to defaults for every corrupt field', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = normalizeSyncedSettings({
+      selectedModeId: 123,
+      targetResolutionSetting: 'bogus',
+      whitelistEnabled: 'yes',
+      whitelist: 'nope',
+      customModes: 'nope',
+      enableCrossOriginFix: null,
+      autoEnableOnWhitelist: 'x',
+      enableHotkey: 1,
+      colorGrading: { enabled: 'yes', brightness: 5, gamma: 99 },
+    });
+
+    expect(result.selectedModeId).toBe('builtin-mode-a');
+    expect(result.targetResolutionSetting).toBe('x2');
+    expect(result.whitelistEnabled).toBe(false);
+    expect(result.whitelist).toEqual([]);
+    expect(result.customModes).toEqual([]);
+    expect(result.enableCrossOriginFix).toBe(false);
+    expect(result.autoEnableOnWhitelist).toBe(false);
+    // enableHotkey defaults to true
+    expect(result.enableHotkey).toBe(true);
+    expect(result.colorGrading).toEqual({
+      enabled: false,
+      brightness: 0,
+      gamma: 1,
+      contrast: 1,
+      saturation: 1,
+      vibrance: 0,
+      exposure: 0,
+    });
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it('preserves valid custom modes and settings', () => {
+    const result = normalizeSyncedSettings({
+      selectedModeId: 'custom-1',
+      targetResolutionSetting: 'native',
+      whitelistEnabled: true,
+      whitelist: [{ pattern: 'example.com', enabled: true }],
+      customModes: [
+        {
+          id: 'custom-1',
+          name: 'Mine',
+          isBuiltIn: false,
+          effects: [{ id: 'anime4k/Sharpen/CAS', params: { sharpness: 0.9 } }],
+        },
+      ],
+      enableCrossOriginFix: true,
+      autoEnableOnWhitelist: true,
+      enableHotkey: false,
+      colorGrading: { enabled: true, brightness: 0.2, gamma: 1.5, contrast: 1, saturation: 1, vibrance: 0, exposure: 0 },
+    });
+
+    expect(result.selectedModeId).toBe('custom-1');
+    expect(result.targetResolutionSetting).toBe('native');
+    expect(result.whitelistEnabled).toBe(true);
+    expect(result.customModes).toHaveLength(1);
+    expect(result.customModes[0].effects[0].params).toEqual({ sharpness: 0.9 });
+    expect(result.enableHotkey).toBe(false);
+    expect(result.colorGrading.enabled).toBe(true);
+    expect(result.colorGrading.brightness).toBe(0.2);
+  });
+
+  it('treats missing fields as defaults without warning', () => {
+    const result = normalizeSyncedSettings({});
+    expect(result.selectedModeId).toBe('builtin-mode-a');
+    expect(result.targetResolutionSetting).toBe('x2');
+    expect(result.customModes).toEqual([]);
+  });
+});
+
+describe('normalizeLocalSettings', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('falls back to defaults for corrupt fields', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = normalizeLocalSettings({
+      performanceTier: 'turbo',
+      gpuBenchmarkResult: { tier: 'nope' },
+      hasCompletedOnboarding: 'no',
+      showDiagnostics: 1,
+    });
+
+    expect(result.performanceTier).toBe('balanced');
+    expect(result.gpuBenchmarkResult).toBeNull();
+    expect(result.hasCompletedOnboarding).toBe(false);
+    expect(result.showDiagnostics).toBe(false);
+  });
+
+  it('preserves valid values', () => {
+    const result = normalizeLocalSettings({
+      performanceTier: 'quality',
+      gpuBenchmarkResult: {
+        tier: 'quality',
+        scores: { performance: 1, balanced: 2, quality: 3, ultra: 4 },
+        maxScores: { performance: 1, balanced: 2, quality: 3, ultra: 4 },
+        timestamp: 1,
+        adapterInfo: 'mock',
+      },
+      hasCompletedOnboarding: true,
+      showDiagnostics: true,
+    });
+
+    expect(result.performanceTier).toBe('quality');
+    expect(result.gpuBenchmarkResult?.tier).toBe('quality');
+    expect(result.hasCompletedOnboarding).toBe(true);
+    expect(result.showDiagnostics).toBe(true);
+  });
+});
+
+describe('getSettings storage read path', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns defaults when stored settings are corrupt and does not throw', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    (chrome.storage.sync.get as any).mockImplementation((_keys: any, cb: any) =>
+      cb({ customModes: 'corrupt', selectedModeId: 42, colorGrading: 'bad' }),
+    );
+    (chrome.storage.local.get as any).mockImplementation((_keys: any, cb: any) =>
+      cb({ performanceTier: 'turbo', showDiagnostics: 'yes', gpuBenchmarkResult: { bad: true } }),
+    );
+
+    // Invalidate the module-level TTL cache so the corrupt values are re-read.
+    capturedOnChanged?.();
+
+    const [settings, local] = await Promise.all([getSettings(), getLocalSettings()]);
+
+    expect(settings.customModes).toEqual([]);
+    expect(settings.selectedModeId).toBe('builtin-mode-a');
+    expect(settings.performanceTier).toBe('balanced');
+    expect(local.showDiagnostics).toBe(false);
+    expect(local.gpuBenchmarkResult).toBeNull();
+    // Built-ins are always present even with no stored custom modes
+    expect(settings.enhancementModes).toHaveLength(BUILTIN_MODES.length);
   });
 });

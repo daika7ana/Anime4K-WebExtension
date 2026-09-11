@@ -36,5 +36,27 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test-setup.ts'],
     include: ['src/**/*.test.ts', 'src/**/*.spec.ts'],
+    coverage: {
+      provider: 'v8',
+      enabled: false,
+      include: ['src/**'],
+      exclude: [
+        'src/**/*.test.ts',
+        'src/**/*.spec.ts',
+        'src/**/*.d.ts',
+        'src/test-setup.ts',
+      ],
+      reporter: ['text', 'text-summary', 'json-summary', 'html'],
+      // Thresholds are intentionally conservative (~5-8 points below the
+      // coverage observed with `include: ['src/**']`) so that in-flight test
+      // and source additions cannot turn the gate red. Raise these once
+      // coverage stabilises.
+      thresholds: {
+        statements: 42,
+        branches: 35,
+        functions: 35,
+        lines: 42,
+      },
+    },
   },
 });
