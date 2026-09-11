@@ -15,6 +15,7 @@ import type {
 } from '../types';
 import { AVAILABLE_EFFECTS } from './effects-map';
 import { resolveEffectChain } from './effect-chain-templates';
+import { getSnapshot, invalidate, isStale, setSnapshot } from './settings-snapshot';
 import {
   DEFAULT_COLOR_GRADING,
   isPerformanceTier,
@@ -33,6 +34,9 @@ const SETTINGS_CACHE_TTL = 2000; // 2-second TTL
 // Automatically invalidate cache when storage changes
 chrome.storage.onChanged.addListener(() => {
   cachedSettings = null;
+  // Also mark the revisioned snapshot stale so getSettings bypasses the TTL
+  // immediately rather than waiting for it to expire.
+  invalidate();
 });
 
 // ===== Built-in Mode Definitions =====
@@ -249,7 +253,14 @@ export async function getLocalSettings(): Promise<LocalSettings> {
  * Uses a TTL cache to avoid redundant chrome.storage IPC calls
  */
 export async function getSettings(): Promise<Anime4KWebExtSettings> {
-  if (cachedSettings && (Date.now() - cacheTimestamp) < SETTINGS_CACHE_TTL) {
+  // The snapshot becomes stale as soon as a relevant storage area changes
+  // (see settings-snapshot.ts), which bypasses the TTL so changes are observed
+  // immediately. When nothing has changed we keep the existing TTL behavior as a
+  // fallback to avoid redundant chrome.storage IPC calls.
+  const snapshot = getSnapshot();
+  const snapshotUsable = snapshot !== null && !isStale();
+
+  if (cachedSettings && snapshotUsable && (Date.now() - cacheTimestamp) < SETTINGS_CACHE_TTL) {
     return cachedSettings;
   }
 
@@ -276,6 +287,7 @@ export async function getSettings(): Promise<Anime4KWebExtSettings> {
 
   cachedSettings = result;
   cacheTimestamp = Date.now();
+  setSnapshot(result);
   return result;
 }
 

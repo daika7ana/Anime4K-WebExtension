@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import {
   synchronizeEffectsForCustomModes,
   getEffectsForMode,
@@ -14,6 +14,14 @@ import {
 const capturedOnChanged = (
   chrome.storage.onChanged.addListener as unknown as { mock: { calls: unknown[][] } }
 ).mock.calls[0]?.[0] as (() => void) | undefined;
+import {
+  dispose as disposeSnapshot,
+  getSnapshot,
+  invalidate,
+  isStale,
+  setSnapshot,
+  subscribe,
+} from './settings-snapshot';
 import { AVAILABLE_EFFECTS } from './effects-map';
 import { resolveEffectChain } from './effect-chain-templates';
 import type { CustomMode, BuiltInMode, PerformanceTier } from '../types';
@@ -314,5 +322,124 @@ describe('getSettings storage read path', () => {
     expect(local.gpuBenchmarkResult).toBeNull();
     // Built-ins are always present even with no stored custom modes
     expect(settings.enhancementModes).toHaveLength(BUILTIN_MODES.length);
+  });
+});
+
+describe('settings snapshot store', () => {
+  beforeEach(() => {
+    // Deterministic storage reads that resolve through the callback API used by
+    // getSettings, regardless of implementations left behind by other tests.
+    (chrome.storage.sync.get as any).mockImplementation((_keys: any, cb: any) => cb?.({}));
+    (chrome.storage.local.get as any).mockImplementation((_keys: any, cb: any) => cb?.({}));
+  });
+
+  afterEach(() => {
+    disposeSnapshot();
+    vi.restoreAllMocks();
+  });
+
+  /** Invoke every registered chrome.storage.onChanged listener for an area. */
+  function fireStorageChanged(areaName: string): void {
+    const calls = (
+      chrome.storage.onChanged.addListener as unknown as { mock: { calls: unknown[][] } }
+    ).mock.calls;
+    for (const [listener] of calls) {
+      (listener as (changes: unknown, area: string) => void)({}, areaName);
+    }
+  }
+
+  it('starts with no snapshot before anything has been published', () => {
+    disposeSnapshot();
+    expect(getSnapshot()).toBeNull();
+  });
+
+  it('publishes a snapshot with an increasing revision on each read', async () => {
+    disposeSnapshot();
+    await getSettings();
+    const first = getSnapshot();
+    expect(first).not.toBeNull();
+    expect(first!.revision).toBeGreaterThan(0);
+
+    invalidate();
+    await getSettings();
+    const second = getSnapshot();
+    expect(second!.revision).toBeGreaterThan(first!.revision);
+  });
+
+  it('notifies subscribers on publish and invalidate and stops after unsubscribe', async () => {
+    disposeSnapshot();
+    const listener = vi.fn();
+    const unsubscribe = subscribe(listener);
+
+    await getSettings();
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    invalidate();
+    expect(listener).toHaveBeenCalledTimes(2);
+
+    // Repeated invalidation while already stale must not double-notify.
+    invalidate();
+    expect(listener).toHaveBeenCalledTimes(2);
+
+    unsubscribe();
+    await getSettings();
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it('invalidates on a sync/local storage change and re-reads immediately', async () => {
+    disposeSnapshot();
+    let storedMode = 'builtin-mode-a';
+    (chrome.storage.sync.get as any).mockImplementation((_keys: any, cb: any) =>
+      cb?.({ selectedModeId: storedMode }),
+    );
+
+    await getSettings();
+    const first = getSnapshot()!;
+    expect(first.value.selectedModeId).toBe('builtin-mode-a');
+    expect(isStale()).toBe(false);
+
+    // Within the TTL the cached value is still returned (fallback behavior).
+    storedMode = 'builtin-mode-c';
+    expect((await getSettings()).selectedModeId).toBe('builtin-mode-a');
+
+    // A storage change invalidates the snapshot -> the next read re-fetches.
+    fireStorageChanged('sync');
+    expect(isStale()).toBe(true);
+
+    const refreshed = await getSettings();
+    expect(refreshed.selectedModeId).toBe('builtin-mode-c');
+    const second = getSnapshot()!;
+    expect(second.revision).toBeGreaterThan(first.revision);
+    expect(isStale()).toBe(false);
+  });
+
+  it('ignores onChanged events for unrelated storage areas', async () => {
+    disposeSnapshot();
+    await getSettings();
+    expect(isStale()).toBe(false);
+
+    // Only exercise the snapshot store's own listener; settings.ts keeps a
+    // legacy unguarded cache-clearing listener that is not under test here.
+    const calls = (
+      chrome.storage.onChanged.addListener as unknown as { mock: { calls: unknown[][] } }
+    ).mock.calls;
+    for (const [listener] of calls) {
+      if (listener === capturedOnChanged) continue;
+      (listener as (changes: unknown, area: string) => void)({}, 'managed');
+    }
+
+    expect(isStale()).toBe(false);
+  });
+
+  it('never throws when chrome.storage.onChanged is unavailable', () => {
+    disposeSnapshot();
+    const original = (chrome.storage as any).onChanged;
+    try {
+      delete (chrome.storage as any).onChanged;
+      expect(() => subscribe(() => {})).not.toThrow();
+      expect(() => setSnapshot({} as any)).not.toThrow();
+    } finally {
+      (chrome.storage as any).onChanged = original;
+    }
   });
 });

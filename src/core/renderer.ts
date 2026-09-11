@@ -3,6 +3,7 @@ import { RendererInitializationError, RendererRuntimeError } from '@core/errors'
 import { t } from '@utils/i18n';
 
 import * as GPUDeviceManager from '@core/gpu/gpu-device-manager';
+import { GpuTimestampProfiler, type ProfilerSnapshot } from '@core/gpu/gpu-timestamp-profiler';
 import { buildEffectPipelines, paramsEqual } from '@core/gpu/pipeline-builder';
 import fullscreenTexturedQuadWGSL from '@shaders/fullscreen-textured-quad.wgsl';
 import sampleExternalTextureWGSL from '@shaders/sample-external-texture.wgsl';
@@ -22,8 +23,10 @@ export class Renderer {
   private targetDimensions: Dimensions;
   private onError?: (error: Error) => void;
   private onFirstFrameRendered?: () => void;
-  private onFrameRendered?: (frameTime: number) => void;
+  private onFrameRendered?: (frameTime: number, profiler?: ProfilerSnapshot | null) => void;
   private onProgress?: (stage: string | null, current?: number, total?: number) => void;
+  /** Whether GPU timestamp profiling should be enabled for this renderer */
+  private enableGpuTimings = false;
 
   // --- State flags ---
   private destroyed = false;
@@ -61,6 +64,10 @@ export class Renderer {
   private videoFrameTexture!: GPUTexture;
   /** Effect processing pipeline chain */
   private pipelines: DestroyablePipeline[] = [];
+  /** Labels for each built pipeline, in encode order (parallel to this.pipelines) */
+  private pipelineLabels: string[] = [];
+  /** Optional GPU timestamp profiler; null when timings are disabled or unsupported */
+  private profiler: GpuTimestampProfiler | null = null;
   /** Generation counter to prevent concurrent buildPipelines() calls from clobbering each other */
   private buildGeneration = 0;
 
@@ -83,6 +90,7 @@ export class Renderer {
     this.onFirstFrameRendered = options.onFirstFrameRendered;
     this.onFrameRendered = options.onFrameRendered;
     this.onProgress = options.onProgress;
+    this.enableGpuTimings = options.enableGpuTimings ?? false;
   }
 
   /**
@@ -120,6 +128,12 @@ export class Renderer {
         const { device } = await GPUDeviceManager.requestGPUDevice();
         this.device = device;
       }
+
+      // Create the optional GPU timestamp profiler on the acquired device.
+      // GpuTimestampProfiler.create() returns null when the timestamp-query
+      // feature is unavailable, and verification disables a broken profiler, so
+      // this stays a no-op on unsupported hardware.
+      await this.createProfiler();
 
       // Listen for device loss events and attempt automatic recovery
       this.device.lost.then((info) => {
@@ -180,6 +194,28 @@ export class Renderer {
   }
 
   /**
+   * Creates the optional GPU timestamp profiler for the current device.
+   * Clears any previous profiler when timings are disabled. When the optional
+   * `timestamp-query` feature is unavailable, `GpuTimestampProfiler.create()`
+   * returns null and all profiling calls remain no-ops. An instance is only
+   * activated after `verify()` proves its resources and probe command work, so a
+   * broken profiler can never invalidate the presentation path.
+   */
+  private async createProfiler(): Promise<void> {
+    if (!this.enableGpuTimings) {
+      this.profiler = null;
+      return;
+    }
+    const profiler = GpuTimestampProfiler.create(this.device, {});
+    if (profiler && await profiler.verify()) {
+      this.profiler = profiler;
+    } else {
+      profiler?.destroy();
+      this.profiler = null;
+    }
+  }
+
+  /**
    * Creates the GPU resources needed for processing, primarily the texture for receiving video frames.
    * This method is called to recreate the texture when the video source resolution changes.
    */
@@ -206,6 +242,7 @@ export class Renderer {
     const oldPipelines = this.pipelines;
     this.pipelines = []; // Clear reference before builder destroys old pipelines
     try {
+      const labels: string[] = [];
       const pipelines = await buildEffectPipelines({
         device: this.device,
         videoFrameTexture: this.videoFrameTexture,
@@ -216,9 +253,14 @@ export class Renderer {
         preWarmer: GPUDeviceManager.getPreWarmer(),
         onProgress: this.onProgress,
         isStale: () => this.buildGeneration !== generation,
+        labels, // Out-param filled with one label per built pipeline, in encode order
       });
       if (this.buildGeneration !== generation) return; // Superseded
       this.pipelines = pipelines;
+      this.pipelineLabels = labels;
+      // The effect chain changed, so previously accumulated per-label timings
+      // no longer map to the current pipelines.
+      this.profiler?.reset();
     } finally {
       this.rebuilding = false; // Allow render loop to resume
     }
@@ -419,8 +461,13 @@ export class Renderer {
 
 
       const commandEncoder = this.device.createCommandEncoder();
-      for (const pipeline of this.pipelines) {
-        await pipeline.pass(commandEncoder);
+      const rec = this.profiler?.beginFrame(commandEncoder) ?? null;
+      for (let i = 0; i < this.pipelines.length; i++) {
+        const label = this.pipelineLabels[i] ?? `pass ${i + 1}`;
+        const t0 = performance.now();
+        await this.pipelines[i].pass(commandEncoder);
+        rec?.recordCpu(label, performance.now() - t0);
+        rec?.mark(label);
       }
       const passEncoder = commandEncoder.beginRenderPass({
         colorAttachments: [{
@@ -429,18 +476,24 @@ export class Renderer {
           loadOp: 'clear',
           storeOp: 'store',
         }],
+        timestampWrites: rec?.writesFor('blit'),
       });
       passEncoder.setPipeline(this.renderPipeline);
       passEncoder.setBindGroup(0, this.renderBindGroup);
       passEncoder.draw(6);
       passEncoder.end();
+      this.profiler?.endFrame(commandEncoder);
       this.device.queue.submit([commandEncoder.finish()]);
+      this.profiler?.afterSubmit();
 
       const frameTime = performance.now() - frameStartTime;
-      this.onFrameRendered?.(frameTime);
+      this.onFrameRendered?.(frameTime, this.profiler?.snapshot() ?? null);
       return true; // Successfully rendered
 
     } catch (error) {
+      // Release any ring slot claimed between beginFrame() and endFrame() so an
+      // aborted frame can never leak the profiler's readback ring.
+      this.profiler?.abortFrame();
       console.error('[Anime4KWebExt] Frame processing failed:', error);
 
       // Check if this is a recoverable size mismatch error
@@ -572,6 +625,9 @@ export class Renderer {
       this.createResources();
       await this.buildPipelines();
       this.createRenderBindGroup();
+      // Texture dimensions changed, so accumulated GPU samples are no longer
+      // comparable to future frames.
+      this.profiler?.reset();
       console.log('[Anime4KWebExt] Renderer resized for source.');
     } finally {
       this.resizing = false; // Always release the guard
@@ -662,6 +718,11 @@ export class Renderer {
         }
       });
 
+      // Re-create the profiler on the new device: the old device's profiler
+      // resources were lost along with the device.
+      this.profiler?.destroy();
+      await this.createProfiler();
+
       // Reconfigure context (unconfigure then configure, as strictly required by the spec)
       this.context.unconfigure();
       this.context.configure({
@@ -717,6 +778,8 @@ export class Renderer {
 
     // Safely destroy all GPU resources
     try {
+      this.profiler?.destroy();
+      this.profiler = null;
       this.pipelines.forEach(pipeline => {
         pipeline.destroy?.();
       });

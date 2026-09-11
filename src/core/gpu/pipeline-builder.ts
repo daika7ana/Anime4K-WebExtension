@@ -88,6 +88,13 @@ interface BuildPipelinesParams {
   onProgress?: (stage: string | null, current?: number, total?: number) => void;
   /** Check if a newer build has superseded this one (generation counter) */
   isStale: () => boolean;
+  /**
+   * Optional out-parameter receiving one label per built pipeline, in encode
+   * order: the effect's `className` for each effect pipeline, `'Downscale'` for
+   * each intermediate downscale stage, and `'passthrough'` for the empty dummy
+   * pipeline. Left untouched when omitted.
+   */
+  labels?: string[];
 }
 
 /**
@@ -104,7 +111,7 @@ interface BuildPipelinesParams {
 export async function buildEffectPipelines(params: BuildPipelinesParams): Promise<DestroyablePipeline[]> {
   const {
     device, videoFrameTexture, video, targetDimensions, effects,
-    oldPipelines, preWarmer: pipelinePreWarmer, onProgress, isStale,
+    oldPipelines, preWarmer: pipelinePreWarmer, onProgress, isStale, labels,
   } = params;
 
   // Wait for the GPU queue to finish before destroying old pipelines to avoid resource contention
@@ -208,6 +215,7 @@ export async function buildEffectPipelines(params: BuildPipelinesParams): Promis
 
     if (pipeline) {
       pipelines.push(pipeline);
+      labels?.push(effect.className);
       currentTexture = pipeline.getOutputTexture();
 
       if (effect.upscaleFactor) {
@@ -229,6 +237,7 @@ export async function buildEffectPipelines(params: BuildPipelinesParams): Promis
               },
             });
             pipelines.push(intermediateDownscale);
+            labels?.push('Downscale');
 
             currentTexture = intermediateDownscale.getOutputTexture();
             curWidth = Math.ceil(idealIntermediateWidth);
@@ -273,6 +282,7 @@ export async function buildEffectPipelines(params: BuildPipelinesParams): Promis
       getOutputTexture: () => videoFrameTexture,
       updateParam: () => { },
     } as unknown as DestroyablePipeline);
+    labels?.push('passthrough');
   }
 
   // Notify that warmup is complete

@@ -130,6 +130,7 @@ describe('buildEffectPipelines', () => {
     isStale: () => boolean;
     onProgress: (stage: string | null, current?: number, total?: number) => void;
     targetDimensions: Dimensions;
+    labels: string[];
   }> = {}) {
     const video = {
       videoWidth: 1920,
@@ -146,6 +147,7 @@ describe('buildEffectPipelines', () => {
       preWarmer: prewarmer,
       onProgress: overrides.onProgress,
       isStale: overrides.isStale ?? (() => false),
+      labels: overrides.labels,
     };
   }
 
@@ -335,6 +337,51 @@ describe('buildEffectPipelines', () => {
 
     // Should have: CNNx2M → Downscale → CNNx2M = 3 pipelines
     expect(pipelines.length).toBe(3);
+  });
+
+  // ── Labels out-parameter ──
+
+  it('records one label per built pipeline in encode order (including Downscale)', async () => {
+    const labels: string[] = [];
+    const params = buildParams({
+      targetDimensions: { width: 1920, height: 1080 },
+      effects: [
+        mkEffect('CNNx2M', undefined, 2),
+        mkEffect('CNNx2M', undefined, 2),
+      ],
+      labels,
+    });
+
+    const pipelines = await buildEffectPipelines(params);
+
+    expect(pipelines.length).toBe(3);
+    expect(labels).toEqual(['CNNx2M', 'Downscale', 'CNNx2M']);
+  });
+
+  it('records classNames for a mixed custom + library chain', async () => {
+    const labels: string[] = [];
+    const params = buildParams({
+      effects: [
+        mkEffect('CAS', { sharpness: 0.5 }),
+        mkEffect('CNNM'),
+        mkEffect('Debanding', { strength: 0.5, bandThreshold: 0.08 }),
+      ],
+      labels,
+    });
+
+    await buildEffectPipelines(params);
+
+    expect(labels).toEqual(['CAS', 'CNNM', 'Debanding']);
+  });
+
+  it("records 'passthrough' for the empty dummy pipeline", async () => {
+    const labels: string[] = [];
+    const params = buildParams({ effects: [], labels });
+
+    const pipelines = await buildEffectPipelines(params);
+
+    expect(pipelines.length).toBe(1);
+    expect(labels).toEqual(['passthrough']);
   });
 
   // ── Effect not found yields dummy pipeline ──

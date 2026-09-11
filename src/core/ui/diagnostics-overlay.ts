@@ -1,3 +1,14 @@
+import type { ProfilerSnapshot } from '@core/gpu/gpu-timestamp-profiler';
+import { t } from '@utils/i18n';
+
+/** Format a millisecond value for the HUD, using an em dash when unavailable. */
+function formatTimingMs(value: number | null | undefined): string {
+  if (value === undefined || value === null || !Number.isFinite(value)) {
+    return '\u2014';
+  }
+  return value.toFixed(2);
+}
+
 /**
  * Diagnostics overlay showing live performance metrics during video enhancement.
  * Attaches to the same video element as the enhance button, positioned top-right.
@@ -11,6 +22,13 @@ export class DiagnosticsOverlay {
   private avgFrameTimeEl: HTMLElement | null = null;
   private pipelineCountEl: HTMLElement | null = null;
   private adapterInfoEl: HTMLElement | null = null;
+  private timingSectionEl: HTMLElement | null = null;
+  private timingTitleEl: HTMLElement | null = null;
+  private timingStatusEl: HTMLElement | null = null;
+  private timingGridEl: HTMLElement | null = null;
+  private timingFramesEl: HTMLElement | null = null;
+  private timingVisible = false;
+  private lastTimingRenderTime = Number.NEGATIVE_INFINITY;
   private frameTimes: number[] = [];
   private lastUpdateTime = 0;
   private hasFirstUpdate = false;
@@ -20,6 +38,7 @@ export class DiagnosticsOverlay {
 
   private static readonly MAX_FRAME_TIMES = 60;
   private static readonly MAX_REASONABLE_DELTA_MS = 500;
+  private static readonly TIMING_THROTTLE_MS = 250;
 
   private constructor(video: HTMLVideoElement, adapterInfo: string) {
     this.video = video;
@@ -71,6 +90,52 @@ export class DiagnosticsOverlay {
       .metric-value {
         font-weight: bold;
         text-align: right;
+      }
+      .timing-section {
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 1px solid rgba(255, 255, 255, 0.18);
+      }
+      .timing-title {
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        opacity: 0.55;
+        margin-bottom: 4px;
+      }
+      .timing-status {
+        opacity: 0.7;
+        font-style: italic;
+      }
+      .timing-grid {
+        display: grid;
+        grid-template-columns: max-content repeat(5, minmax(46px, max-content));
+        column-gap: 12px;
+        row-gap: 2px;
+        align-items: baseline;
+      }
+      .timing-cell {
+        text-align: right;
+      }
+      .timing-pass {
+        text-align: left;
+        max-width: 140px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .timing-head {
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        opacity: 0.55;
+      }
+      .timing-total {
+        opacity: 0.85;
+      }
+      .timing-frames {
+        margin-top: 4px;
+        font-size: 11px;
+        opacity: 0.6;
       }
     `;
     this.shadowRoot.appendChild(style);
@@ -152,6 +217,38 @@ export class DiagnosticsOverlay {
     adpRow.appendChild(adpValue);
     container.appendChild(adpRow);
 
+    // GPU/CPU per-effect timing section (populated from a profiler snapshot)
+    const timingSection = document.createElement('div');
+    timingSection.className = 'timing-section';
+    timingSection.style.display = 'none';
+
+    const timingTitle = document.createElement('div');
+    timingTitle.className = 'timing-title';
+    timingTitle.textContent = t('diagnosticsGpuTimings', 'GPU Timings');
+    timingSection.appendChild(timingTitle);
+    this.timingTitleEl = timingTitle;
+
+    const timingStatus = document.createElement('div');
+    timingStatus.className = 'timing-status';
+    timingStatus.style.display = 'none';
+    timingSection.appendChild(timingStatus);
+    this.timingStatusEl = timingStatus;
+
+    const timingGrid = document.createElement('div');
+    timingGrid.className = 'timing-grid';
+    timingGrid.style.display = 'none';
+    timingSection.appendChild(timingGrid);
+    this.timingGridEl = timingGrid;
+
+    const timingFrames = document.createElement('div');
+    timingFrames.className = 'timing-frames';
+    timingFrames.style.display = 'none';
+    timingSection.appendChild(timingFrames);
+    this.timingFramesEl = timingFrames;
+
+    this.timingSectionEl = timingSection;
+    container.appendChild(timingSection);
+
     this.shadowRoot.appendChild(container);
 
     // Start hidden
@@ -185,9 +282,26 @@ export class DiagnosticsOverlay {
       this.host = null;
       this.shadowRoot = null;
     }
+    this.timingSectionEl = null;
+    this.timingTitleEl = null;
+    this.timingStatusEl = null;
+    this.timingGridEl = null;
+    this.timingFramesEl = null;
+    this.timingVisible = false;
+    this.lastTimingRenderTime = Number.NEGATIVE_INFINITY;
   }
 
-  public update(frameTime: number, pipelineCount: number): void {
+  /**
+   * Record one frame's metrics.
+   *
+   * `snapshot` is optional so existing two-argument callers keep working; when
+   * omitted (or `null`) the GPU/CPU timing section stays hidden.
+   */
+  public update(
+    frameTime: number,
+    pipelineCount: number,
+    snapshot?: ProfilerSnapshot | null,
+  ): void {
     const now = performance.now();
 
     // Use wall-clock time between consecutive update() calls for FPS calculation.
@@ -231,6 +345,113 @@ export class DiagnosticsOverlay {
     if (this.pipelineCountEl) {
       this.pipelineCountEl.textContent = String(pipelineCount);
     }
+
+    this.updateTimingSection(snapshot, now);
+  }
+
+  /**
+   * Show/hide and (throttled) rebuild the timing section from the latest
+   * snapshot. Visibility changes are applied immediately; the pass table is
+   * only rebuilt every {@link DiagnosticsOverlay.TIMING_THROTTLE_MS} so the HUD
+   * is not thrashed on every frame.
+   */
+  private updateTimingSection(snapshot: ProfilerSnapshot | null | undefined, now: number): void {
+    const section = this.timingSectionEl;
+    if (!section) return;
+
+    const shouldShow = snapshot != null
+      && (snapshot.status !== 'active' || snapshot.passes.length > 0);
+    if (!shouldShow) {
+      if (this.timingVisible) {
+        section.style.display = 'none';
+        this.timingVisible = false;
+        this.clearTimingSection();
+      }
+      return;
+    }
+
+    const becameVisible = !this.timingVisible;
+    section.style.display = 'block';
+    this.timingVisible = true;
+
+    // A non-active status is a single, cheap line and must replace any rows
+    // immediately so a degraded/destroyed profiler never leaves stale data.
+    if (snapshot.status !== 'active' || becameVisible) {
+      this.lastTimingRenderTime = now;
+      this.renderTimingSection(snapshot);
+      return;
+    }
+
+    if (now - this.lastTimingRenderTime < DiagnosticsOverlay.TIMING_THROTTLE_MS) {
+      return;
+    }
+    this.lastTimingRenderTime = now;
+    this.renderTimingSection(snapshot);
+  }
+
+  private renderTimingSection(snapshot: ProfilerSnapshot): void {
+    const title = this.timingTitleEl;
+    const status = this.timingStatusEl;
+    const grid = this.timingGridEl;
+    const frames = this.timingFramesEl;
+    if (!title || !status || !grid || !frames) return;
+
+    grid.replaceChildren();
+    frames.textContent = '';
+
+    if (snapshot.status !== 'active') {
+      title.style.display = 'none';
+      grid.style.display = 'none';
+      frames.style.display = 'none';
+      status.textContent = t('diagnosticsGpuTimingsUnavailable', 'GPU timings unavailable');
+      status.style.display = 'block';
+      return;
+    }
+
+    title.style.display = 'block';
+    status.style.display = 'none';
+    status.textContent = '';
+    grid.style.display = 'grid';
+    frames.style.display = 'block';
+
+    grid.appendChild(this.createTimingCell(t('diagnosticsTimingPass', 'Pass'), 'timing-pass timing-head'));
+    grid.appendChild(this.createTimingCell(t('diagnosticsTimingCpuP50', 'CPU p50'), 'timing-cell timing-head'));
+    grid.appendChild(this.createTimingCell(t('diagnosticsTimingCpuP95', 'CPU p95'), 'timing-cell timing-head'));
+    grid.appendChild(this.createTimingCell(t('diagnosticsTimingGpuP50', 'GPU p50'), 'timing-cell timing-head'));
+    grid.appendChild(this.createTimingCell(t('diagnosticsTimingGpuP95', 'GPU p95'), 'timing-cell timing-head'));
+    grid.appendChild(this.createTimingCell(t('diagnosticsTimingGpuP99', 'GPU p99'), 'timing-cell timing-head'));
+
+    for (const pass of snapshot.passes) {
+      grid.appendChild(this.createTimingCell(pass.label, 'timing-pass'));
+      grid.appendChild(this.createTimingCell(formatTimingMs(pass.cpuP50), 'timing-cell'));
+      grid.appendChild(this.createTimingCell(formatTimingMs(pass.cpuP95), 'timing-cell'));
+      grid.appendChild(this.createTimingCell(formatTimingMs(pass.gpuP50), 'timing-cell'));
+      grid.appendChild(this.createTimingCell(formatTimingMs(pass.gpuP95), 'timing-cell'));
+      grid.appendChild(this.createTimingCell(formatTimingMs(pass.gpuP99), 'timing-cell'));
+    }
+
+    // Total GPU row aligns under the GPU columns; total has no p99.
+    grid.appendChild(this.createTimingCell(t('diagnosticsTimingTotal', 'Total GPU'), 'timing-pass timing-total'));
+    grid.appendChild(this.createTimingCell('', 'timing-cell'));
+    grid.appendChild(this.createTimingCell('', 'timing-cell'));
+    grid.appendChild(this.createTimingCell(formatTimingMs(snapshot.totalGpuP50), 'timing-cell timing-total'));
+    grid.appendChild(this.createTimingCell(formatTimingMs(snapshot.totalGpuP95), 'timing-cell timing-total'));
+    grid.appendChild(this.createTimingCell('', 'timing-cell'));
+
+    frames.textContent = `${t('diagnosticsFramesSampled', 'Frames sampled')}: ${snapshot.framesSampled}`;
+  }
+
+  private createTimingCell(text: string, className: string): HTMLElement {
+    const cell = document.createElement('span');
+    cell.className = className;
+    cell.textContent = text;
+    return cell;
+  }
+
+  private clearTimingSection(): void {
+    this.timingGridEl?.replaceChildren();
+    if (this.timingStatusEl) this.timingStatusEl.textContent = '';
+    if (this.timingFramesEl) this.timingFramesEl.textContent = '';
   }
 
   private updatePosition(): void {

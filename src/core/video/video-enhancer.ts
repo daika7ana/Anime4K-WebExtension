@@ -223,7 +223,8 @@ export class VideoEnhancer {
 
     // Create diagnostics overlay if enabled in local settings
     const localSettings = await getLocalSettings();
-    if (localSettings.showDiagnostics) {
+    const showDiagnostics = localSettings.showDiagnostics;
+    if (showDiagnostics) {
       const adapterInfo = await this.getAdapterInfo();
       this.diagnosticsOverlay = DiagnosticsOverlay.create(this.video, adapterInfo);
       this.diagnosticsOverlay.show();
@@ -234,6 +235,8 @@ export class VideoEnhancer {
       canvas: canvas,
       effects: effects,
       targetDimensions,
+      // GPU timings are only collected while the diagnostics overlay is shown.
+      enableGpuTimings: showDiagnostics,
       onError: async (error: Error) => {
         console.error('[Anime4KWebExt] Renderer runtime error:', error);
         const isCrossOriginError = error.name === 'SecurityError' && error.message.includes('tainted');
@@ -260,8 +263,8 @@ export class VideoEnhancer {
           this.button.innerText = stage;
         }
       },
-      onFrameRendered: (frameTime: number) => {
-        this.diagnosticsOverlay?.update(frameTime, this.currentPipelineCount);
+      onFrameRendered: (frameTime, snapshot) => {
+        this.diagnosticsOverlay?.update(frameTime, this.currentPipelineCount, snapshot);
       },
     });
 

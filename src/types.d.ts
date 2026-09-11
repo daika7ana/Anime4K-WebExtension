@@ -1,5 +1,6 @@
 // ===== Anime4K Library Types =====
 import type { Anime4KPipeline } from 'anime4k-webgpu-async';
+import type { ProfilerSnapshot } from './core/gpu/gpu-timestamp-profiler';
 
 // ===== CSS Module Declarations =====
 declare module "*.css";
@@ -211,10 +212,18 @@ interface RendererOptions {
   onError?: (error: Error) => void;
   /** Callback function invoked when the first frame is successfully rendered */
   onFirstFrameRendered?: () => void;
-  /** Callback invoked after each successfully rendered frame with the frame time in ms */
-  onFrameRendered?: (frameTime: number) => void;
+  /**
+   * Callback invoked after each successfully rendered frame with the frame time
+   * in ms and, when GPU timings are enabled, the latest profiler snapshot.
+   */
+  onFrameRendered?: (frameTime: number, profiler?: ProfilerSnapshot | null) => void;
   /** Initialization progress callback function */
   onProgress?: (stage: string | null, current?: number, total?: number) => void;
+  /**
+   * Enables GPU timestamp profiling via the optional `timestamp-query` feature.
+   * Profiling is silently skipped when the feature is unavailable.
+   */
+  enableGpuTimings?: boolean;
 }
 
 // Export interfaces for use by other modules

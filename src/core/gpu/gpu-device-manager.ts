@@ -35,11 +35,16 @@ export function preWarmGPU(): void {
       const adapter = await navigator.gpu.requestAdapter(adapterOptions);
       if (!adapter) return;
       const adapterLimits = adapter.limits;
+      // Feature detection is adapter-level: unsupported adapters pass an empty
+      // array and pay nothing for optional profiling.
+      const features: GPUFeatureName[] =
+        adapter.features?.has('timestamp-query') ? ['timestamp-query'] : [];
       prewarmedDevice = await adapter.requestDevice({
         requiredLimits: {
           maxBufferSize: adapterLimits.maxBufferSize,
           maxStorageBufferBindingSize: adapterLimits.maxStorageBufferBindingSize,
         },
+        requiredFeatures: features,
       });
 
       // Auto-destroy prewarmed device if unclaimed after 30 seconds
@@ -94,11 +99,16 @@ export async function requestGPUDevice(): Promise<{ device: GPUDevice; adapter: 
     throw new Error('WebGPU not supported: No adapter found.');
   }
   const adapterLimits = adapter.limits;
+  // Feature detection is adapter-level: unsupported adapters pass an empty
+  // array and pay nothing for optional profiling.
+  const features: GPUFeatureName[] =
+    adapter.features?.has('timestamp-query') ? ['timestamp-query'] : [];
   const device = await adapter.requestDevice({
     requiredLimits: {
       maxBufferSize: adapterLimits.maxBufferSize,
       maxStorageBufferBindingSize: adapterLimits.maxStorageBufferBindingSize,
     },
+    requiredFeatures: features,
   });
   return { device, adapter };
 }

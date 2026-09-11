@@ -5,6 +5,7 @@
 
 import type { PerformanceTier, GPUBenchmarkResult, EnhancementEffect, BenchmarkProgress, DestroyablePipeline, Anime4KClassMap, GPUAdapterWithInfo } from '@/types';
 import { resolveEffectChain } from '@utils/effect-chain-templates';
+import { TexturePool } from './texture-pool';
 
 // Test configuration
 const TEST_TIMEOUT_MS = 20000; // Individual test timeout
@@ -233,6 +234,17 @@ export async function runGPUBenchmark(
         deviceLost = true;
     });
 
+    // Per-device texture pool. The benchmark's input texture has an identical
+    // descriptor for every tier, so consecutive tiers recycle the same texture
+    // instead of allocating/destroying one per tier.
+    const texturePool = new TexturePool(device);
+    const inputTextureDescriptor = {
+        width: TEST_WIDTH,
+        height: TEST_HEIGHT,
+        format: 'rgba8unorm' as const,
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+    };
+
     // Pre-generate test data (reused across all tiers)
     const testData = new Uint8Array(TEST_WIDTH * TEST_HEIGHT * 4);
     // crypto.getRandomValues has a 65536 byte limit, fill in chunks
@@ -255,11 +267,7 @@ export async function runGPUBenchmark(
     // Global warmup phase: run multiple frames with performance effect chain to warm up GPU
     console.log('[GPUBenchmark] Global warmup phase...');
     {
-        const warmupTexture = device.createTexture({
-            size: [TEST_WIDTH, TEST_HEIGHT],
-            format: 'rgba8unorm',
-            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-        });
+        const warmupTexture = texturePool.acquire(inputTextureDescriptor);
         device.queue.writeTexture(
             { texture: warmupTexture },
             testData,
@@ -270,7 +278,7 @@ export async function runGPUBenchmark(
 
         const warmupEffects = resolveEffectChain('A+A', 'performance');
         await runEffectChainTest(device, warmupTexture, warmupEffects, Anime4K);
-        warmupTexture.destroy();
+        texturePool.release(warmupTexture);
         console.log('[GPUBenchmark] Global warmup complete');
     }
 
@@ -290,14 +298,11 @@ export async function runGPUBenchmark(
             completed: false,
         });
 
-        // Create independent input texture for each tier test
+        // Acquire the input texture for this tier test from the pool. Every tier
+        // uses the same descriptor, so after the first tier this is a pool hit.
         let inputTexture: GPUTexture;
         try {
-            inputTexture = device.createTexture({
-                size: [TEST_WIDTH, TEST_HEIGHT],
-                format: 'rgba8unorm',
-                usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-            });
+            inputTexture = texturePool.acquire(inputTextureDescriptor);
             device.queue.writeTexture(
                 { texture: inputTexture },
                 testData,
@@ -332,12 +337,12 @@ export async function runGPUBenchmark(
             samplesByTier[tier] = samples;
             console.log(`[GPUBenchmark] ${tier}: avg=${avgTime.toFixed(2)}ms, max=${maxTime.toFixed(2)}ms per frame`);
 
-            // Safely destroy texture
+            // Return the texture to the pool for reuse by the next tier
             try {
                 await device.queue.onSubmittedWorkDone();
-                inputTexture.destroy();
+                texturePool.release(inputTexture);
             } catch {
-                // Ignore destroy error
+                // Ignore cleanup error
             }
 
             // If current tier is too slow, skip heavier tiers
@@ -351,14 +356,15 @@ export async function runGPUBenchmark(
             await chrome.storage.local.remove('_benchmarkInProgress');
 
             try {
-                inputTexture.destroy();
+                texturePool.release(inputTexture);
             } catch {
-                // Ignore destroy error
+                // Ignore cleanup error
             }
 
             // If the first tier (performance) fails, throw immediately
             if (i === 0) {
                 intentionalDestroy = true;
+                texturePool.dispose();
                 device.destroy();
                 throw error;
             }
@@ -376,6 +382,7 @@ export async function runGPUBenchmark(
     // If no tier succeeded (all scores are Infinity), throw
     if (scores.performance === Infinity) {
         intentionalDestroy = true;
+        texturePool.dispose();
         device.destroy();
         throw new Error('All benchmark tests failed');
     }
@@ -387,6 +394,7 @@ export async function runGPUBenchmark(
 
     // Cleanup resources
     intentionalDestroy = true;
+    texturePool.dispose();
     device.destroy();
 
     const result: GPUBenchmarkResult = {

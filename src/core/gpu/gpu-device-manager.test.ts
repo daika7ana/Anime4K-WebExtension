@@ -106,7 +106,50 @@ describe('gpu-device-manager', () => {
             maxBufferSize: expect.any(Number),
             maxStorageBufferBindingSize: expect.any(Number),
           }),
+          requiredFeatures: expect.any(Array),
         }),
+      );
+    });
+
+    it('requestGPUDevice() requests timestamp-query when the adapter advertises it', async () => {
+      mock.adapter.features.add('timestamp-query');
+
+      await requestGPUDevice();
+
+      expect(mock.adapter.requestDevice).toHaveBeenCalledWith(
+        expect.objectContaining({ requiredFeatures: ['timestamp-query'] }),
+      );
+    });
+
+    it('requestGPUDevice() omits timestamp-query when the adapter does not advertise it', async () => {
+      mock.adapter.features.delete('timestamp-query');
+
+      await requestGPUDevice();
+
+      expect(mock.adapter.requestDevice).toHaveBeenCalledWith(
+        expect.objectContaining({ requiredFeatures: [] }),
+      );
+    });
+
+    it('preWarmGPU() requests timestamp-query when the adapter advertises it', async () => {
+      mock.adapter.features.add('timestamp-query');
+
+      preWarmGPU();
+      await awaitPreWarm();
+
+      expect(mock.adapter.requestDevice).toHaveBeenCalledWith(
+        expect.objectContaining({ requiredFeatures: ['timestamp-query'] }),
+      );
+    });
+
+    it('preWarmGPU() omits timestamp-query when the adapter does not advertise it', async () => {
+      mock.adapter.features.delete('timestamp-query');
+
+      preWarmGPU();
+      await awaitPreWarm();
+
+      expect(mock.adapter.requestDevice).toHaveBeenCalledWith(
+        expect.objectContaining({ requiredFeatures: [] }),
       );
     });
 

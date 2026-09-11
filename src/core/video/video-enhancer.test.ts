@@ -456,7 +456,7 @@ describe('VideoEnhancer', () => {
       expect(mockDiagnosticsOverlay.destroy).toHaveBeenCalled();
     });
 
-    it('onFrameRendered callback updates diagnostics overlay', async () => {
+    it('onFrameRendered callback forwards the profiler snapshot to the diagnostics overlay', async () => {
       (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
         showDiagnostics: true,
       });
@@ -468,10 +468,43 @@ describe('VideoEnhancer', () => {
       const createCall = (Renderer.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
       expect(createCall.onFrameRendered).toBeDefined();
 
-      // Simulate a frame render
-      createCall.onFrameRendered!(12.5);
+      // Simulate a frame render with a profiler snapshot
+      const snapshot = {
+        status: 'active' as const,
+        framesSampled: 1,
+        totalGpuP50: 1.5,
+        totalGpuP95: 2.5,
+        passes: [{ label: 'ClampHighlights', gpuP50: 1.5 }],
+      };
+      createCall.onFrameRendered!(12.5, snapshot);
 
-      expect(mockDiagnosticsOverlay.update).toHaveBeenCalledWith(12.5, 1);
+      expect(mockDiagnosticsOverlay.update).toHaveBeenCalledWith(12.5, 1, snapshot);
+      enhancer.destroy();
+    });
+
+    it('passes enableGpuTimings=true to the renderer when diagnostics are shown', async () => {
+      (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        showDiagnostics: true,
+      });
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      const createCall = (Renderer.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(createCall.enableGpuTimings).toBe(true);
+      enhancer.destroy();
+    });
+
+    it('passes enableGpuTimings=false to the renderer when diagnostics are hidden', async () => {
+      (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        showDiagnostics: false,
+      });
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      const createCall = (Renderer.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(createCall.enableGpuTimings).toBe(false);
       enhancer.destroy();
     });
 

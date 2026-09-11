@@ -44,6 +44,7 @@ export default defineConfig({
         'src/**/*.test.ts',
         'src/**/*.spec.ts',
         'src/**/*.d.ts',
+        'src/**/*.html',
         'src/test-setup.ts',
       ],
       reporter: ['text', 'text-summary', 'json-summary', 'html'],

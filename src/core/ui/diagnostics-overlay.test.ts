@@ -1,5 +1,26 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { ProfilerSnapshot } from '@core/gpu/gpu-timestamp-profiler';
 import { DiagnosticsOverlay } from './diagnostics-overlay';
+
+// Surface the English fallbacks so assertions can target user-visible strings.
+vi.mock('@utils/i18n', () => ({
+  t: vi.fn((_key: string, fallback?: string) => fallback ?? _key),
+}));
+
+/**
+ * Builds an active profiler snapshot, letting each test override only the
+ * fields it cares about.
+ */
+function activeSnapshot(overrides: Partial<ProfilerSnapshot> = {}): ProfilerSnapshot {
+  return {
+    status: 'active',
+    framesSampled: 0,
+    totalGpuP50: null,
+    totalGpuP95: null,
+    passes: [],
+    ...overrides,
+  };
+}
 
 /**
  * Creates a video element inside a parent div with common layout properties,
@@ -262,6 +283,154 @@ describe('DiagnosticsOverlay', () => {
         overlay.destroy();
         overlay.destroy();
       }).not.toThrow();
+    });
+  });
+
+  describe('GPU/CPU timing section', () => {
+    function shadowOf(video: HTMLVideoElement): ShadowRoot {
+      const host = video.parentElement?.querySelector('div') as HTMLElement;
+      return host.shadowRoot as ShadowRoot;
+    }
+
+    it('renders a row per pass, the totals, and the sample count', () => {
+      const video = createTestVideo();
+      const overlay = DiagnosticsOverlay.create(video, 'Test GPU');
+
+      overlay.update(0, 4, activeSnapshot({
+        framesSampled: 128,
+        totalGpuP50: 7.5,
+        totalGpuP95: 9.25,
+        passes: [
+          { label: 'EffectA', cpuP50: 1.2, cpuP95: 2.5, gpuP50: 0.8, gpuP95: 1.4, gpuP99: 2.0 },
+          // GPU values intentionally omitted — those cells must stay clean.
+          { label: 'EffectB', cpuP50: 3.0, cpuP95: 4.0 },
+        ],
+      }));
+
+      const shadow = shadowOf(video);
+      const section = shadow.querySelector('.timing-section') as HTMLElement;
+      expect(section.style.display).toBe('block');
+
+      const grid = shadow.querySelector('.timing-grid') as HTMLElement;
+      expect(grid.style.display).toBe('grid');
+      expect(grid.textContent).toContain('EffectA');
+      expect(grid.textContent).toContain('EffectB');
+      // CPU p50/p95 and GPU p50/p95/p99 for EffectA.
+      expect(grid.textContent).toContain('1.20');
+      expect(grid.textContent).toContain('2.50');
+      expect(grid.textContent).toContain('0.80');
+      expect(grid.textContent).toContain('1.40');
+      expect(grid.textContent).toContain('2.00');
+      // Omitted GPU values render as an em dash, never "undefined".
+      expect(grid.textContent).toContain('\u2014');
+      expect(grid.textContent).not.toContain('undefined');
+      // Totals (p50 / p95).
+      expect(grid.textContent).toContain('7.50');
+      expect(grid.textContent).toContain('9.25');
+      // Sample count readout.
+      expect(shadow.querySelector('.timing-frames')?.textContent).toContain('128');
+
+      overlay.destroy();
+    });
+
+    it('shows n/a for null totals', () => {
+      const video = createTestVideo();
+      const overlay = DiagnosticsOverlay.create(video, 'Test GPU');
+
+      overlay.update(0, 4, activeSnapshot({
+        totalGpuP50: null,
+        totalGpuP95: null,
+        passes: [{ label: 'EffectA', gpuP50: 1.0 }],
+      }));
+
+      const grid = shadowOf(video).querySelector('.timing-grid') as HTMLElement;
+      // Two null total cells both render as em dashes.
+      expect(grid.textContent).toContain('\u2014');
+
+      overlay.destroy();
+    });
+
+    it('shows a status line and no pass rows when the profiler is not active', () => {
+      const video = createTestVideo();
+      const overlay = DiagnosticsOverlay.create(video, 'Test GPU');
+
+      overlay.update(0, 4, {
+        status: 'degraded',
+        framesSampled: 9,
+        totalGpuP50: null,
+        totalGpuP95: null,
+        passes: [{ label: 'StaleEffect', gpuP50: 1.0 }],
+      });
+
+      const shadow = shadowOf(video);
+      const section = shadow.querySelector('.timing-section') as HTMLElement;
+      expect(section.style.display).toBe('block');
+
+      const status = shadow.querySelector('.timing-status') as HTMLElement;
+      expect(status.style.display).toBe('block');
+      expect(status.textContent).toBe('GPU timings unavailable');
+
+      const grid = shadow.querySelector('.timing-grid') as HTMLElement;
+      expect(grid.style.display).toBe('none');
+      expect(grid.textContent).not.toContain('StaleEffect');
+
+      overlay.destroy();
+    });
+
+    it('keeps the section hidden when no snapshot or no passes are provided', () => {
+      const video = createTestVideo();
+      const overlay = DiagnosticsOverlay.create(video, 'Test GPU');
+      const section = () => shadowOf(video).querySelector('.timing-section') as HTMLElement;
+
+      // Omitted snapshot (backwards-compatible 2-argument call).
+      overlay.update(0, 4);
+      expect(section().style.display).toBe('none');
+
+      // Explicit null snapshot.
+      overlay.update(0, 4, null);
+      expect(section().style.display).toBe('none');
+
+      // Active profiler but no sampled passes yet.
+      overlay.update(0, 4, activeSnapshot({ passes: [] }));
+      expect(section().style.display).toBe('none');
+
+      overlay.destroy();
+    });
+
+    it('throttles timing DOM rebuilds to ~250ms while later updates do rebuild', () => {
+      const video = createTestVideo();
+      const overlay = DiagnosticsOverlay.create(video, 'Test GPU');
+      const grid = () => shadowOf(video).querySelector('.timing-grid') as HTMLElement;
+
+      // t=0 — first snapshot renders immediately.
+      overlay.update(0, 4, activeSnapshot({ passes: [{ label: 'EffectA' }] }));
+      expect(grid().textContent).toContain('EffectA');
+
+      // t=100 — inside the throttle window, so the table must not change.
+      currentTime = 100;
+      overlay.update(0, 4, activeSnapshot({ passes: [{ label: 'EffectB' }] }));
+      expect(grid().textContent).toContain('EffectA');
+      expect(grid().textContent).not.toContain('EffectB');
+
+      // t=300 — outside the throttle window, so a rebuild is allowed.
+      currentTime = 300;
+      overlay.update(0, 4, activeSnapshot({ passes: [{ label: 'EffectB' }] }));
+      expect(grid().textContent).toContain('EffectB');
+      expect(grid().textContent).not.toContain('EffectA');
+
+      overlay.destroy();
+    });
+
+    it('removes the timing section on destroy', () => {
+      const video = createTestVideo();
+      const overlay = DiagnosticsOverlay.create(video, 'Test GPU');
+
+      overlay.update(0, 4, activeSnapshot({ passes: [{ label: 'EffectA' }] }));
+      const section = shadowOf(video).querySelector('.timing-section') as HTMLElement;
+      expect(section.isConnected).toBe(true);
+
+      overlay.destroy();
+      expect(section.isConnected).toBe(false);
     });
   });
 });

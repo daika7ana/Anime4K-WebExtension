@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { installGPUMock, removeGPUMock, type MockGPUObjects } from '@/test/webgpu-mock';
-import type { Dimensions, EnhancementEffect } from '@/types';
+import { installGPUMock, removeGPUMock, createMockGPUBuffer, type MockGPUObjects } from '@/test/webgpu-mock';
+import type { Dimensions, EnhancementEffect, RendererOptions } from '@/types';
+import type { ProfilerSnapshot } from '@core/gpu/gpu-timestamp-profiler';
 import { RendererInitializationError } from '@core/errors';
 
 const {
@@ -129,10 +130,11 @@ describe('Renderer', () => {
       canvas: (overrides.canvas as HTMLCanvasElement) ?? canvas,
       effects: (overrides.effects as EnhancementEffect[]) ?? DEFAULT_EFFECTS,
       targetDimensions: (overrides.targetDimensions as Dimensions) ?? DEFAULT_DIMENSIONS,
-      onError: overrides.onError as ((error: Error) => void) | undefined,
+      onError: overrides.onError as RendererOptions['onError'],
       onFirstFrameRendered: overrides.onFirstFrameRendered as (() => void) | undefined,
-      onFrameRendered: overrides.onFrameRendered as ((frameTime: number) => void) | undefined,
+      onFrameRendered: overrides.onFrameRendered as RendererOptions['onFrameRendered'],
       onProgress: overrides.onProgress as ((stage: string | null, current?: number, total?: number) => void) | undefined,
+      enableGpuTimings: overrides.enableGpuTimings as boolean | undefined,
     });
     await Promise.resolve();
     return r;
@@ -429,6 +431,189 @@ describe('Renderer', () => {
       const r = await createRenderer(); // no onFrameRendered
       // Should not throw
       expect(() => r.destroy()).not.toThrow();
+    });
+  });
+
+  describe('GPU timestamp profiling', () => {
+    interface CapturedEncoder {
+      beginRenderPass: ReturnType<typeof vi.fn>;
+      resolveQuerySet: ReturnType<typeof vi.fn>;
+      finish: ReturnType<typeof vi.fn>;
+    }
+
+    interface ProfilerAccess {
+      profiler: { snapshot(): ProfilerSnapshot } | null;
+    }
+
+    /** Replace the mock's command encoder with a shared, inspectable one. */
+    function captureCommandEncoder(): CapturedEncoder {
+      const beginRenderPass = vi.fn(() => ({
+        setPipeline: vi.fn(),
+        setBindGroup: vi.fn(),
+        draw: vi.fn(),
+        end: vi.fn(),
+      }));
+      const resolveQuerySet = vi.fn();
+      const finish = vi.fn(() => ({ label: 'command-buffer' }));
+      mock.device.createCommandEncoder.mockImplementation(() => ({
+        beginRenderPass,
+        beginComputePass: vi.fn(() => ({
+          setPipeline: vi.fn(),
+          setBindGroup: vi.fn(),
+          dispatchWorkgroups: vi.fn(),
+          end: vi.fn(),
+        })),
+        resolveQuerySet,
+        finish,
+        copyTextureToTexture: vi.fn(),
+        copyBufferToTexture: vi.fn(),
+        copyBufferToBuffer: vi.fn(),
+      }));
+      return { beginRenderPass, resolveQuerySet, finish };
+    }
+
+    /**
+     * Make profiler readback buffers settle deterministically so verification
+     * and per-frame readback complete without manual pumping. `seed` fills the
+     * staging buffer with ascending nanosecond timestamps; `reject` makes
+     * verification fail.
+     */
+    function configureReadback(opts: { seed?: boolean; reject?: boolean } = {}): void {
+      mock.device.createBuffer.mockImplementation((descriptor?: Record<string, unknown>) => {
+        const usage = Number(descriptor?.usage ?? 0);
+        const buffer = createMockGPUBuffer(Number(descriptor?.size ?? 0), usage);
+        if ((usage & GPUBufferUsage.MAP_READ) !== 0) {
+          buffer.mapAsync.mockImplementation(() => {
+            if (opts.reject) return Promise.reject(new Error('readback map failed'));
+            if (opts.seed) {
+              for (let i = 0; i < buffer.data.length; i++) {
+                buffer.data[i] = BigInt((i + 1) * 1_000_000);
+              }
+            }
+            return Promise.resolve();
+          });
+        }
+        return buffer;
+      });
+    }
+
+    it('creates an active profiler and emits timestamped marker passes when enabled', async () => {
+      mock.device.features.add('timestamp-query');
+      configureReadback();
+      const { beginRenderPass } = captureCommandEncoder();
+      const onFrameRendered = vi.fn();
+
+      const r = await createRenderer({ enableGpuTimings: true, onFrameRendered });
+
+      expect(mock.device.createQuerySet).toHaveBeenCalled();
+
+      // Baseline marker + one marker per pipeline + the timestamped final blit.
+      const timestamped = beginRenderPass.mock.calls.filter(
+        (call) => call[0]?.timestampWrites !== undefined,
+      );
+      expect(timestamped.length).toBeGreaterThanOrEqual(3);
+
+      expect(onFrameRendered).toHaveBeenCalledTimes(1);
+      const snapshot = onFrameRendered.mock.calls[0][1];
+      expect(snapshot).not.toBeNull();
+      expect(snapshot.status).toBe('active');
+
+      r.destroy();
+    });
+
+    it('samples the first pipeline label in the happy path', async () => {
+      mock.device.features.add('timestamp-query');
+      configureReadback({ seed: true });
+
+      const r = await createRenderer({ enableGpuTimings: true });
+
+      await vi.waitFor(() => {
+        const profiler = (r as unknown as ProfilerAccess).profiler;
+        expect(profiler).not.toBeNull();
+        expect(profiler!.snapshot().framesSampled).toBeGreaterThan(0);
+      });
+
+      const passes = (r as unknown as ProfilerAccess).profiler!.snapshot().passes;
+      const first = passes.find((pass) => pass.gpuP50 !== undefined);
+      expect(first?.label).toBe('pass 1');
+      expect(first?.gpuP50).toBeGreaterThan(0);
+
+      r.destroy();
+    });
+
+    it('still presents and calls back when verification fails', async () => {
+      mock.device.features.add('timestamp-query');
+      configureReadback({ reject: true });
+      const { beginRenderPass, finish } = captureCommandEncoder();
+      const onFrameRendered = vi.fn();
+
+      const r = await createRenderer({ enableGpuTimings: true, onFrameRendered });
+
+      // The failed profiler is discarded; the presentation path still runs and
+      // the final (blit) pass carries no timestamp writes.
+      expect(mock.context.getCurrentTexture).toHaveBeenCalled();
+      const lastPass = beginRenderPass.mock.calls.at(-1)?.[0];
+      expect(lastPass?.timestampWrites).toBeUndefined();
+
+      // The presentation blit is still encoded and submitted.
+      expect(finish).toHaveBeenCalled();
+      expect(mock.device.queue.submit).toHaveBeenCalled();
+      expect(onFrameRendered).toHaveBeenCalledTimes(1);
+      expect(onFrameRendered.mock.calls[0][1]).toBeNull();
+
+      r.destroy();
+    });
+
+    it('does not enable the profiler when enableGpuTimings is false', async () => {
+      mock.device.features.add('timestamp-query');
+      configureReadback();
+      const { beginRenderPass } = captureCommandEncoder();
+      const onFrameRendered = vi.fn();
+
+      const r = await createRenderer({ enableGpuTimings: false, onFrameRendered });
+
+      expect(mock.device.createQuerySet).not.toHaveBeenCalled();
+      const timestamped = beginRenderPass.mock.calls.filter(
+        (call) => call[0]?.timestampWrites !== undefined,
+      );
+      expect(timestamped).toHaveLength(0);
+      expect(onFrameRendered).toHaveBeenCalledTimes(1);
+      expect(onFrameRendered.mock.calls[0][1]).toBeNull();
+
+      r.destroy();
+    });
+
+    it('stays inert when the timestamp-query feature is absent', async () => {
+      // The feature is intentionally not added to the mock device.
+      const { beginRenderPass } = captureCommandEncoder();
+      const onFrameRendered = vi.fn();
+
+      const r = await createRenderer({ enableGpuTimings: true, onFrameRendered });
+
+      expect(mock.device.createQuerySet).not.toHaveBeenCalled();
+      const timestamped = beginRenderPass.mock.calls.filter(
+        (call) => call[0]?.timestampWrites !== undefined,
+      );
+      expect(timestamped).toHaveLength(0);
+      expect(onFrameRendered).toHaveBeenCalledTimes(1);
+      expect(onFrameRendered.mock.calls[0][1]).toBeNull();
+
+      r.destroy();
+    });
+
+    it('destroys the profiler on renderer destroy', async () => {
+      mock.device.features.add('timestamp-query');
+      configureReadback();
+      const r = await createRenderer({ enableGpuTimings: true });
+
+      const querySet = mock.device.createQuerySet.mock.results[0]?.value as
+        | { destroy: ReturnType<typeof vi.fn> }
+        | undefined;
+      expect(querySet).toBeDefined();
+
+      r.destroy();
+
+      expect(querySet!.destroy).toHaveBeenCalled();
     });
   });
 
