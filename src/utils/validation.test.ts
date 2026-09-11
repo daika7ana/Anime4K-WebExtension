@@ -346,6 +346,7 @@ describe('settings field guards', () => {
   it('isValidResolutionSetting accepts only known resolutions', () => {
     expect(isValidResolutionSetting('x4')).toBe(true);
     expect(isValidResolutionSetting('native')).toBe(true);
+    expect(isValidResolutionSetting('display')).toBe(true);
     expect(isValidResolutionSetting('bogus')).toBe(false);
   });
 });

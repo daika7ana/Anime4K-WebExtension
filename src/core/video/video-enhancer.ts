@@ -8,6 +8,9 @@ import { OverlayManager } from '@core/ui/overlay-manager';
 import { DiagnosticsOverlay } from '@core/ui/diagnostics-overlay';
 import { yieldToAnimationFrame } from '@core/utils/yield-utils';
 
+/** Debounce delay before reacting to monitor size / DPR changes. */
+const DISPLAY_RESIZE_DEBOUNCE_MS = 200;
+
 /**
  * Video enhancer class that encapsulates Anime4K processing logic.
  * Manages the enhancement state, renderer instance, and resource cleanup for a single video element.
@@ -19,6 +22,18 @@ export class VideoEnhancer {
   private button: HTMLButtonElement;
   private diagnosticsOverlay: DiagnosticsOverlay | null = null;
   private currentPipelineCount = 0;
+
+  /** The resolution setting the renderer is currently configured with. */
+  private activeResolutionSetting: string | null = null;
+  /** Whether the monitor size / DPR listeners are currently attached. */
+  private displayListenersAttached = false;
+  private resizeDebounceTimer: number | null = null;
+  private dprMediaQuery: MediaQueryList | null = null;
+
+  /** Stable handler reference so listeners can be removed cleanly. */
+  private readonly onDisplayResize = (): void => {
+    this.scheduleDisplayResize();
+  };
 
   private constructor(private video: HTMLVideoElement) {
     this.overlay = OverlayManager.create(this.video);
@@ -268,6 +283,10 @@ export class VideoEnhancer {
       },
     });
 
+    // Track the active resolution setting and attach monitor/DPR listeners when
+    // the target follows the monitor display size.
+    this.updateDisplayResizeListeners(targetResolutionSetting);
+
     console.log(`[Anime4KWebExt] Renderer initialized with mode: ${selectedMode.name}`);
   }
 
@@ -313,6 +332,7 @@ export class VideoEnhancer {
     });
 
     this.currentModeId = selectedMode.id;
+    this.updateDisplayResizeListeners(targetResolutionSetting);
     console.log(`[Anime4KWebExt] Renderer updated to mode: ${selectedMode.name}`);
 
     // Update pipeline count for diagnostics
@@ -346,9 +366,6 @@ export class VideoEnhancer {
    * Calculates the target rendering dimensions (capped at 8K to prevent OOM)
    */
   private calculateTargetDimensions(videoWidth: number, videoHeight: number, resolutionSetting: string): Dimensions {
-    const MAX_WIDTH = 7680;
-    const MAX_HEIGHT = 4320;
-
     const multipliers: Record<string, number> = { 'x2': 2, 'x4': 4, 'x8': 8 };
     const fixedResolutions: Record<string, Dimensions> = {
       '720p': { width: 1280, height: 720 },
@@ -356,6 +373,10 @@ export class VideoEnhancer {
       '2k': { width: 2560, height: 1440 },
       '4k': { width: 3840, height: 2160 },
     };
+
+    if (resolutionSetting === 'display') {
+      return this.calculateDisplayDimensions(videoWidth, videoHeight);
+    }
 
     let width: number;
     let height: number;
@@ -369,7 +390,73 @@ export class VideoEnhancer {
       return { width: videoWidth, height: videoHeight };
     }
 
-    // Cap maximum resolution to prevent textures from being too large and causing OOM
+    return this.clampToMaxResolution(width, height);
+  }
+
+  /**
+   * Computes the render target that maps to the monitor's pixels.
+   *
+   * This is intentionally based on the monitor rather than the video element's
+   * on-screen box: the player can be windowed (smaller than the monitor) or
+   * fullscreen, and sizing to the player would render a small texture that the
+   * browser then blurs on upscale. Targeting the monitor keeps the texture
+   * constant and sharp — the browser downscales it for smaller players and it
+   * is 1:1 in fullscreen.
+   *
+   * Uses window.screen.width/height as the reference box (falling back to the
+   * viewport), fits the source aspect ratio into it, then scales by the device
+   * pixel ratio.
+   */
+  private calculateDisplayDimensions(videoWidth: number, videoHeight: number): Dimensions {
+    const dpr = window.devicePixelRatio || 1;
+
+    // Reference box in CSS pixels: the monitor. Fall back to the viewport when
+    // screen dimensions are unavailable or invalid (e.g. jsdom, odd hosts).
+    let boxWidth = window.screen?.width ?? 0;
+    let boxHeight = window.screen?.height ?? 0;
+    if (boxWidth <= 0 || boxHeight <= 0) {
+      boxWidth = window.innerWidth || 0;
+      boxHeight = window.innerHeight || 0;
+    }
+
+    // Never create a zero-sized texture: fall back to the source dimensions.
+    if (boxWidth <= 0 || boxHeight <= 0 || videoWidth <= 0 || videoHeight <= 0) {
+      return { width: videoWidth, height: videoHeight };
+    }
+
+    // The target is fitted into the reference box with the source aspect ratio
+    // preserved, mirroring how the video is letterboxed with object-fit: contain.
+    const srcAspect = videoWidth / videoHeight;
+    let contentWidth: number;
+    let contentHeight: number;
+    if (boxWidth / boxHeight > srcAspect) {
+      // Box is wider than the source: pillarboxed, height is the constraint.
+      contentHeight = boxHeight;
+      contentWidth = boxHeight * srcAspect;
+    } else {
+      // Box is taller than the source: letterboxed, width is the constraint.
+      contentWidth = boxWidth;
+      contentHeight = boxWidth / srcAspect;
+    }
+
+    // Map CSS pixels to device pixels and round down to an even integer
+    // (texture-friendly alignment), flooring at 2.
+    let width = Math.round(contentWidth * dpr);
+    let height = Math.round(contentHeight * dpr);
+    width = Math.max(2, width - (width % 2));
+    height = Math.max(2, height - (height % 2));
+
+    return this.clampToMaxResolution(width, height);
+  }
+
+  /**
+   * Caps a render target at 8K to prevent textures from being too large and
+   * causing OOM, preserving the aspect ratio.
+   */
+  private clampToMaxResolution(width: number, height: number): Dimensions {
+    const MAX_WIDTH = 7680;
+    const MAX_HEIGHT = 4320;
+
     if (width > MAX_WIDTH || height > MAX_HEIGHT) {
       const scale = Math.min(MAX_WIDTH / width, MAX_HEIGHT / height);
       width = Math.floor(width * scale);
@@ -377,6 +464,117 @@ export class VideoEnhancer {
     }
 
     return { width, height };
+  }
+
+  /**
+   * Keeps the monitor-size listeners in sync with the active resolution
+   * setting. They are only attached while the target is 'display'.
+   */
+  private updateDisplayResizeListeners(resolutionSetting: string): void {
+    this.activeResolutionSetting = resolutionSetting;
+    if (resolutionSetting === 'display') {
+      this.attachDisplayResizeListeners();
+    } else {
+      this.detachDisplayResizeListeners();
+    }
+  }
+
+  /**
+   * Attaches the window-resize and DPR listeners used to follow monitor
+   * changes (browser zoom, monitor switch). Idempotent, so repeated calls do
+   * not double-register.
+   */
+  private attachDisplayResizeListeners(): void {
+    if (this.displayListenersAttached) return;
+    this.displayListenersAttached = true;
+
+    window.addEventListener('resize', this.onDisplayResize);
+    this.armDprWatcher();
+  }
+
+  /**
+   * Removes every monitor-size listener and clears any pending debounce.
+   */
+  private detachDisplayResizeListeners(): void {
+    if (!this.displayListenersAttached) return;
+    this.displayListenersAttached = false;
+
+    window.removeEventListener('resize', this.onDisplayResize);
+    this.disarmDprWatcher();
+
+    if (this.resizeDebounceTimer !== null) {
+      clearTimeout(this.resizeDebounceTimer);
+      this.resizeDebounceTimer = null;
+    }
+  }
+
+  /**
+   * Watches for device-pixel-ratio changes (monitor switch, browser zoom).
+   */
+  private armDprWatcher(): void {
+    if (typeof window.matchMedia !== 'function') return;
+    const dpr = window.devicePixelRatio || 1;
+    this.dprMediaQuery = window.matchMedia(`(resolution: ${dpr}dppx)`);
+    this.dprMediaQuery.addEventListener('change', this.onDisplayResize);
+  }
+
+  /**
+   * Re-creates the DPR watcher against the current ratio. Used after a change
+   * so the media query tracks the new value.
+   */
+  private rearmDprWatcher(): void {
+    if (!this.displayListenersAttached) return;
+    this.disarmDprWatcher();
+    this.armDprWatcher();
+  }
+
+  private disarmDprWatcher(): void {
+    if (this.dprMediaQuery) {
+      this.dprMediaQuery.removeEventListener('change', this.onDisplayResize);
+      this.dprMediaQuery = null;
+    }
+  }
+
+  /**
+   * Debounces resize events, coalescing bursts (e.g. while dragging/fullscreen)
+   * into a single recompute. No work is scheduled when enhancement is inactive.
+   */
+  private scheduleDisplayResize(): void {
+    if (!this.renderer || this.activeResolutionSetting !== 'display') return;
+
+    if (this.resizeDebounceTimer !== null) {
+      clearTimeout(this.resizeDebounceTimer);
+    }
+
+    this.resizeDebounceTimer = window.setTimeout(() => {
+      this.resizeDebounceTimer = null;
+      // A DPR change may not emit a window resize; re-check it here too.
+      this.rearmDprWatcher();
+      void this.applyDisplayResize();
+    }, DISPLAY_RESIZE_DEBOUNCE_MS);
+  }
+
+  /**
+   * Recomputes the display-sized target and, only when it actually changed,
+   * resizes the canvas and reconfigures the renderer.
+   */
+  private async applyDisplayResize(): Promise<void> {
+    if (!this.renderer || this.activeResolutionSetting !== 'display') return;
+
+    const dimensions = this.calculateTargetDimensions(
+      this.video.videoWidth,
+      this.video.videoHeight,
+      'display'
+    );
+
+    const canvas = this.overlay.getCanvas();
+    if (dimensions.width === canvas.width && dimensions.height === canvas.height) {
+      return; // Unchanged dimensions: skip the costly pipeline rebuild.
+    }
+
+    // Mirror updateSettings() so the effect chain stays consistent.
+    const settings = await getSettings();
+    await this.updateSettings(settings);
   }
 
   /**
@@ -432,7 +630,8 @@ export class VideoEnhancer {
     this.video = newVideo;
     this.overlay.reattach(newVideo);
 
-
+    // The monitor/DPR listeners are independent of the video element, so there
+    // is nothing to re-point here.
 
     // Update the renderer
     if (this.renderer) {
@@ -460,6 +659,8 @@ export class VideoEnhancer {
   private disableEnhancement(): void {
     console.log('[Anime4KWebExt] disableEnhancement called. Current renderer:', this.renderer);
     console.log('[Anime4KWebExt] Video opacity before:', this.video.style.opacity);
+    this.detachDisplayResizeListeners();
+    this.activeResolutionSetting = null;
     if (this.diagnosticsOverlay) {
       this.diagnosticsOverlay.destroy();
       this.diagnosticsOverlay = null;

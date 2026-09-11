@@ -15,6 +15,7 @@ import { Debanding } from '@core/effects/debanding';
 import { t } from '@utils/i18n';
 import { yieldToMain } from '@core/utils/yield-utils';
 import { PipelinePreWarmer } from './pipeline-prewarmer';
+import { computeRemainingUpscaleFactors, planIntermediateDownscale } from './effect-chain';
 
 /**
  * Registry of custom (non-anime4k-webgpu-async) effects.
@@ -163,17 +164,13 @@ export async function buildEffectPipelines(params: BuildPipelinesParams): Promis
   }
   if (isStale()) return []; // Superseded
 
-  // If needed, get the Downscale class
-  const needsDownscaling = effects.some((effect, i) => {
-    const remainingFactor = effects.slice(i + 1).reduce((acc, val) => acc * (val.upscaleFactor ?? 1), 1);
-    return (effect.upscaleFactor ?? 1) > 1 && remainingFactor > 1;
-  });
-  const DownscaleClass = needsDownscaling ? anime4kModule.Downscale : null;
+  const remainingUpscaleFactors = computeRemainingUpscaleFactors(effects);
 
-  const upscaleFactors = effects.map(e => e.upscaleFactor ?? 1);
-  const remainingUpscaleFactors = upscaleFactors.map((_, i) =>
-    upscaleFactors.slice(i + 1).reduce((acc, val) => acc * val, 1)
+  // If needed, get the Downscale class
+  const needsDownscaling = effects.some((effect, i) =>
+    (effect.upscaleFactor ?? 1) > 1 && remainingUpscaleFactors[i] > 1
   );
+  const DownscaleClass = needsDownscaling ? anime4kModule.Downscale : null;
 
   // --- Phase 1: Create all pipeline instances (no GPU submission) ---
   // Each pipeline constructor may trigger synchronous GPU shader compilation (200-500ms on first run),
@@ -222,26 +219,25 @@ export async function buildEffectPipelines(params: BuildPipelinesParams): Promis
         curWidth *= effect.upscaleFactor;
         curHeight *= effect.upscaleFactor;
 
-        const remainingFactor = remainingUpscaleFactors[i];
-        if (DownscaleClass && remainingFactor > 1) {
-          const idealIntermediateWidth = targetDimensions.width / remainingFactor;
-          const idealIntermediateHeight = targetDimensions.height / remainingFactor;
-
-          if (curWidth > idealIntermediateWidth * 1.1) {
+        if (DownscaleClass) {
+          const intermediate = planIntermediateDownscale({
+            curWidth,
+            curHeight,
+            targetDimensions,
+            remainingFactor: remainingUpscaleFactors[i],
+          });
+          if (intermediate) {
             const intermediateDownscale = new DownscaleClass({
               device,
               inputTexture: currentTexture,
-              targetDimensions: {
-                width: Math.ceil(idealIntermediateWidth),
-                height: Math.ceil(idealIntermediateHeight),
-              },
+              targetDimensions: intermediate,
             });
             pipelines.push(intermediateDownscale);
             labels?.push('Downscale');
 
             currentTexture = intermediateDownscale.getOutputTexture();
-            curWidth = Math.ceil(idealIntermediateWidth);
-            curHeight = Math.ceil(idealIntermediateHeight);
+            curWidth = intermediate.width;
+            curHeight = intermediate.height;
           }
         }
       }

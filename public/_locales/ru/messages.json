@@ -29,6 +29,9 @@
   "nativeResolution": {
     "message": "Нативное (без улучшения)"
   },
+  "matchDisplayResolution": {
+    "message": "По размеру экрана"
+  },
   "enhanceError": {
     "message": "Не удалось улучшить видео, попробуйте еще раз",
     "description": "Текст ошибки для неудавшегося улучшения"

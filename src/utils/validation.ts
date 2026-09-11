@@ -478,6 +478,7 @@ const RESOLUTION_SETTINGS: readonly string[] = [
   '2k',
   '4k',
   'native',
+  'display',
 ];
 
 export function isValidResolutionSetting(value: unknown): value is string {

@@ -400,6 +400,280 @@ describe('VideoEnhancer', () => {
     });
   });
 
+  describe('display resolution (Match Display)', () => {
+    const DISPLAY_SETTINGS = {
+      selectedModeId: 'builtin-mode-a',
+      enhancementModes: [
+        { id: 'builtin-mode-a', baseMode: 'A', name: 'Mode A', isBuiltIn: true },
+      ],
+      targetResolutionSetting: 'display',
+      performanceTier: 'balanced',
+      enableCrossOriginFix: false,
+    };
+
+    function useDisplaySettings(): void {
+      (getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...DISPLAY_SETTINGS });
+    }
+
+    function setSourceSize(width: number, height: number): void {
+      Object.defineProperty(video, 'videoWidth', { value: width, configurable: true });
+      Object.defineProperty(video, 'videoHeight', { value: height, configurable: true });
+    }
+
+    function setScreenSize(width: number, height: number): void {
+      Object.defineProperty(window.screen, 'width', { value: width, configurable: true });
+      Object.defineProperty(window.screen, 'height', { value: height, configurable: true });
+    }
+
+    function setViewport(width: number, height: number): void {
+      Object.defineProperty(window, 'innerWidth', { value: width, configurable: true });
+      Object.defineProperty(window, 'innerHeight', { value: height, configurable: true });
+    }
+
+    function setDpr(dpr: number): void {
+      Object.defineProperty(window, 'devicePixelRatio', { value: dpr, configurable: true });
+    }
+
+    function firstCreateTargetDimensions(): { width: number; height: number } {
+      return (Renderer.create as ReturnType<typeof vi.fn>).mock.calls[0][0].targetDimensions;
+    }
+
+    /** Installs a matchMedia stub and returns a function to fire its change event. */
+    function stubMatchMedia(): { fireChange: () => void; matchMedia: ReturnType<typeof vi.fn> } {
+      const listeners = new Set<() => void>();
+      const mql = {
+        matches: false,
+        media: '',
+        onchange: null,
+        addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+        removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(() => false),
+      };
+      const matchMedia = vi.fn(() => mql);
+      Object.defineProperty(window, 'matchMedia', { value: matchMedia, configurable: true });
+      return { fireChange: () => listeners.forEach((listener) => listener()), matchMedia };
+    }
+
+    // Capture original descriptors so mocks can be restored precisely.
+    // (vi.unstubAllGlobals would also drop test-setup.ts's chrome stub.)
+    const originalDpr = Object.getOwnPropertyDescriptor(window, 'devicePixelRatio');
+    const originalScreenWidth = Object.getOwnPropertyDescriptor(window.screen, 'width');
+    const originalScreenHeight = Object.getOwnPropertyDescriptor(window.screen, 'height');
+    const originalInnerWidth = Object.getOwnPropertyDescriptor(window, 'innerWidth');
+    const originalInnerHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight');
+    const originalMatchMedia = Object.getOwnPropertyDescriptor(window, 'matchMedia');
+    const originalResizeObserver = Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver');
+
+    function restoreProperty(
+      target: object,
+      key: string,
+      descriptor: PropertyDescriptor | undefined,
+    ): void {
+      if (descriptor) {
+        Object.defineProperty(target, key, descriptor);
+      } else {
+        Reflect.deleteProperty(target, key);
+      }
+    }
+
+    afterEach(() => {
+      vi.useRealTimers();
+      restoreProperty(window, 'devicePixelRatio', originalDpr);
+      restoreProperty(window, 'innerWidth', originalInnerWidth);
+      restoreProperty(window, 'innerHeight', originalInnerHeight);
+      restoreProperty(window, 'matchMedia', originalMatchMedia);
+      restoreProperty(window.screen, 'width', originalScreenWidth);
+      restoreProperty(window.screen, 'height', originalScreenHeight);
+      restoreProperty(globalThis, 'ResizeObserver', originalResizeObserver);
+    });
+
+    it('sizes to a 1920x1080 monitor at dpr 1 (not the player box)', async () => {
+      setSourceSize(1920, 1080);
+      setScreenSize(1920, 1080);
+      setViewport(800, 600); // player is windowed; the monitor must drive the target
+      setDpr(1);
+      useDisplaySettings();
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      expect(firstCreateTargetDimensions()).toEqual({ width: 1920, height: 1080 });
+      enhancer.destroy();
+    });
+
+    it('doubles the target on a 1280x720 monitor at dpr 2', async () => {
+      setSourceSize(1920, 1080);
+      setScreenSize(1280, 720);
+      setViewport(500, 500);
+      setDpr(2);
+      useDisplaySettings();
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      expect(firstCreateTargetDimensions()).toEqual({ width: 2560, height: 1440 });
+      enhancer.destroy();
+    });
+
+    it('fits a 4:3 source into a 16:9 monitor, height-limited and aspect-preserved', async () => {
+      setSourceSize(640, 480);
+      setScreenSize(1920, 1080);
+      setViewport(800, 600);
+      setDpr(1);
+      useDisplaySettings();
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      // 1080 * (640/480) = 1440; height stays 1080
+      expect(firstCreateTargetDimensions()).toEqual({ width: 1440, height: 1080 });
+      enhancer.destroy();
+    });
+
+    it('caps the monitor-sized target at 8K', async () => {
+      setSourceSize(1920, 1080);
+      setScreenSize(10000, 10000);
+      setViewport(800, 600);
+      setDpr(1);
+      useDisplaySettings();
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      const dimensions = firstCreateTargetDimensions();
+      expect(dimensions.width).toBeLessThanOrEqual(7680);
+      expect(dimensions.height).toBeLessThanOrEqual(4320);
+      enhancer.destroy();
+    });
+
+    it('falls back to the viewport when screen dimensions are invalid', async () => {
+      setSourceSize(1920, 1080);
+      setScreenSize(0, 0);
+      setViewport(1600, 900);
+      setDpr(1);
+      useDisplaySettings();
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      expect(firstCreateTargetDimensions()).toEqual({ width: 1600, height: 900 });
+      enhancer.destroy();
+    });
+
+    it('falls back to source dimensions when screen and viewport are invalid', async () => {
+      setSourceSize(640, 360);
+      setScreenSize(0, 0);
+      setViewport(0, 0);
+      setDpr(2);
+      useDisplaySettings();
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      expect(firstCreateTargetDimensions()).toEqual({ width: 640, height: 360 });
+      enhancer.destroy();
+    });
+
+    it('does not create a video ResizeObserver for display mode', async () => {
+      const ResizeObserverMock = vi.fn();
+      Object.defineProperty(globalThis, 'ResizeObserver', {
+        value: ResizeObserverMock,
+        configurable: true,
+      });
+
+      setSourceSize(1920, 1080);
+      setScreenSize(1920, 1080);
+      setViewport(800, 600);
+      setDpr(1);
+      useDisplaySettings();
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      expect(ResizeObserverMock).not.toHaveBeenCalled();
+      enhancer.destroy();
+    });
+
+    it('does not rebuild when the player/window resizes', async () => {
+      vi.useFakeTimers();
+      setSourceSize(1920, 1080);
+      setScreenSize(1920, 1080);
+      setViewport(1920, 1080);
+      setDpr(1);
+      useDisplaySettings();
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      const canvas = mockOverlay.getCanvas.mock.results.at(-1)!.value as HTMLCanvasElement;
+      expect(canvas.width).toBe(1920);
+      expect(canvas.height).toBe(1080);
+
+      // Shrink the viewport (windowed player): the monitor-sized target is
+      // unchanged, so no pipeline rebuild is triggered.
+      setViewport(800, 600);
+      window.dispatchEvent(new Event('resize'));
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(mockRenderer.updateConfiguration).not.toHaveBeenCalled();
+      expect(canvas.width).toBe(1920);
+      expect(canvas.height).toBe(1080);
+
+      enhancer.destroy();
+    });
+
+    it('recomputes when the device pixel ratio changes', async () => {
+      vi.useFakeTimers();
+      const { fireChange } = stubMatchMedia();
+      setSourceSize(1920, 1080);
+      setScreenSize(1920, 1080);
+      setViewport(800, 600);
+      setDpr(1);
+      useDisplaySettings();
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      const canvas = mockOverlay.getCanvas.mock.results.at(-1)!.value as HTMLCanvasElement;
+      expect(canvas.width).toBe(1920);
+      expect(canvas.height).toBe(1080);
+
+      // Simulate a monitor/DPR change firing the resolution media query.
+      setDpr(2);
+      fireChange();
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(mockRenderer.updateConfiguration).toHaveBeenCalledTimes(1);
+      expect(canvas.width).toBe(3840);
+      expect(canvas.height).toBe(2160);
+
+      enhancer.destroy();
+    });
+
+    it('does not react to resize for non-display settings', async () => {
+      vi.useFakeTimers();
+      const { matchMedia } = stubMatchMedia();
+      setSourceSize(1920, 1080);
+      setScreenSize(1920, 1080);
+      setViewport(800, 600);
+      setDpr(2);
+      // Default beforeEach settings use targetResolutionSetting 'x2'.
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      window.dispatchEvent(new Event('resize'));
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(matchMedia).not.toHaveBeenCalled();
+      expect(mockRenderer.updateConfiguration).not.toHaveBeenCalled();
+
+      enhancer.destroy();
+    });
+  });
+
   describe('diagnostics overlay', () => {
     beforeEach(() => {
       // Provide a minimal requestAdapter stub so getAdapterInfo resolves quickly

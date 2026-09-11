@@ -29,6 +29,9 @@
   "nativeResolution": {
     "message": "オリジナル解像度 (超解像なし)"
   },
+  "matchDisplayResolution": {
+    "message": "表示サイズに合わせる"
+  },
   "enhanceError": {
     "message": "超解像に失敗しました、再試行してください",
     "description": "超解像失敗エラーメッセージ"

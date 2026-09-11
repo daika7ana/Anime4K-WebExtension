@@ -30,6 +30,9 @@
   "nativeResolution": {
     "message": "原始解析度 (不超解析)"
   },
+  "matchDisplayResolution": {
+    "message": "符合顯示解析度"
+  },
   "enhanceError": {
     "message": "超解析失敗，請重試",
     "description": "超解析失敗錯誤訊息"

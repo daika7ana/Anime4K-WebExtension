@@ -29,6 +29,9 @@
   "nativeResolution": {
     "message": "Native Resolution (No Enhancement)"
   },
+  "matchDisplayResolution": {
+    "message": "Match Display"
+  },
   "enhanceError": {
     "message": "Enhancement failed, please try again",
     "description": "Error message for enhancement failure"

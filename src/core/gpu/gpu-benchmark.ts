@@ -6,6 +6,7 @@
 import type { PerformanceTier, GPUBenchmarkResult, EnhancementEffect, BenchmarkProgress, DestroyablePipeline, Anime4KClassMap, GPUAdapterWithInfo } from '@/types';
 import { resolveEffectChain } from '@utils/effect-chain-templates';
 import { TexturePool } from './texture-pool';
+import { computeRemainingUpscaleFactors, planIntermediateDownscale } from './effect-chain';
 
 // Test configuration
 const TEST_TIMEOUT_MS = 20000; // Individual test timeout
@@ -434,10 +435,7 @@ async function runEffectChainTest(
     const DownscaleClass = (Anime4K as unknown as Anime4KClassMap).Downscale;
 
     // Pre-calculate remaining upscale factors
-    const upscaleFactors = effects.map(e => e.upscaleFactor ?? 1);
-    const remainingUpscaleFactors = upscaleFactors.map((_, i) =>
-        upscaleFactors.slice(i + 1).reduce((acc, val) => acc * val, 1)
-    );
+    const remainingUpscaleFactors = computeRemainingUpscaleFactors(effects);
 
     for (let i = 0; i < effects.length; i++) {
         const effect = effects[i];
@@ -466,24 +464,23 @@ async function runEffectChainTest(
                 curHeight *= upscaleFactor;
 
                 // Check if intermediate downscaling is needed (consistent with renderer.ts)
-                const remainingFactor = remainingUpscaleFactors[i];
-                if (DownscaleClass && remainingFactor > 1) {
-                    const idealIntermediateWidth = TARGET_WIDTH / remainingFactor;
-                    const idealIntermediateHeight = TARGET_HEIGHT / remainingFactor;
-
-                    if (curWidth > idealIntermediateWidth * 1.1) {
+                if (DownscaleClass) {
+                    const intermediate = planIntermediateDownscale({
+                        curWidth,
+                        curHeight,
+                        targetDimensions: { width: TARGET_WIDTH, height: TARGET_HEIGHT },
+                        remainingFactor: remainingUpscaleFactors[i],
+                    });
+                    if (intermediate) {
                         const intermediateDownscale = new DownscaleClass({
                             device,
                             inputTexture: currentTexture,
-                            targetDimensions: {
-                                width: Math.ceil(idealIntermediateWidth),
-                                height: Math.ceil(idealIntermediateHeight),
-                            },
+                            targetDimensions: intermediate,
                         });
                         pipelines.push(intermediateDownscale);
                         currentTexture = intermediateDownscale.getOutputTexture();
-                        curWidth = Math.ceil(idealIntermediateWidth);
-                        curHeight = Math.ceil(idealIntermediateHeight);
+                        curWidth = intermediate.width;
+                        curHeight = intermediate.height;
                     }
                 }
             }
