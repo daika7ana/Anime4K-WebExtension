@@ -11,6 +11,7 @@
  * with a structured list of problems. Callers must not apply a failed result.
  */
 
+import type { EffectDescriptor } from 'anime4k-webgpu-async';
 import type {
   ColorGradingSettings,
   CustomMode,
@@ -19,7 +20,8 @@ import type {
   PerformanceTier,
   WhitelistRule,
 } from '../types';
-import { AVAILABLE_EFFECTS } from './effects-map';
+import { descriptorToCatalogEffect } from './effects-map';
+import { isKnownBackendId, listEffectDescriptors, resolveEffectReference } from './effect-registry';
 
 // ===== Result types =====
 
@@ -64,14 +66,12 @@ export interface EffectParamBound {
 }
 
 /**
- * Allowed numeric parameters per effect class name, with inclusive bounds.
- *
- * Kept in sync with `PARAM_REGISTRY` in `src/ui/options/param-sliders.ts` and
- * with the catalog defaults in `src/utils/effects-map.ts`. Any effect that has
- * no entry here exposes no user-tunable params and must not carry a `params`
- * object on import.
+ * Legacy fallback bounds, used for descriptors that declare no `paramsSchema`
+ * — currently the library Anime4K DoG / BilateralMean entries. Values are kept
+ * exactly in sync with `PARAM_REGISTRY` in `src/ui/options/param-sliders.ts`
+ * and with the catalog defaults in `src/utils/effects-map.ts`.
  */
-export const EFFECT_PARAM_BOUNDS: Readonly<
+const LEGACY_EFFECT_PARAM_BOUNDS: Readonly<
   Record<string, Readonly<Record<string, EffectParamBound>>>
 > = {
   CAS: {
@@ -88,6 +88,58 @@ export const EFFECT_PARAM_BOUNDS: Readonly<
     strength: { min: 0, max: 1, defaultValue: 0.5 },
     bandThreshold: { min: 0, max: 1, defaultValue: 0.08 },
   },
+};
+
+/** Extract numeric param bounds from a descriptor's declared `paramsSchema`. */
+function schemaParamBounds(
+  schema: NonNullable<EffectDescriptor['paramsSchema']>,
+): Record<string, EffectParamBound> {
+  const bounds: Record<string, EffectParamBound> = {};
+  for (const [key, param] of Object.entries(schema)) {
+    if (
+      param.type !== 'number' ||
+      typeof param.min !== 'number' ||
+      typeof param.max !== 'number' ||
+      typeof param.defaultValue !== 'number'
+    ) {
+      continue;
+    }
+    bounds[key] = { min: param.min, max: param.max, defaultValue: param.defaultValue };
+  }
+  return bounds;
+}
+
+/**
+ * Derive bounds from every user-visible descriptor that declares a schema.
+ * Hidden/system effects (ColorAdjust) are excluded: they are not part of the
+ * selectable catalog and their bounds are not validated here.
+ */
+function deriveEffectParamBounds(): Record<
+  string,
+  Readonly<Record<string, EffectParamBound>>
+> {
+  const derived: Record<string, Readonly<Record<string, EffectParamBound>>> = {};
+  for (const descriptor of listEffectDescriptors()) {
+    if (!descriptor.paramsSchema) continue;
+    const bounds = schemaParamBounds(descriptor.paramsSchema);
+    if (Object.keys(bounds).length > 0) derived[descriptor.key] = bounds;
+  }
+  return derived;
+}
+
+/**
+ * Allowed numeric parameters per effect class name, with inclusive bounds.
+ *
+ * Derived from each descriptor's `paramsSchema` when declared, falling back to
+ * the legacy table for descriptors that do not (library Anime4K DoG /
+ * BilateralMean). Any effect that has no entry here exposes no user-tunable
+ * params and must not carry a `params` object on import.
+ */
+export const EFFECT_PARAM_BOUNDS: Readonly<
+  Record<string, Readonly<Record<string, EffectParamBound>>>
+> = {
+  ...LEGACY_EFFECT_PARAM_BOUNDS,
+  ...deriveEffectParamBounds(),
 };
 
 // ===== Color grading metadata =====
@@ -124,8 +176,16 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+/**
+ * Every registered effect (including hidden/system ones such as ColorAdjust),
+ * keyed by id. Derived from the composed engine registry so validation accepts
+ * exactly what the engine seam can resolve.
+ */
 const EFFECTS_BY_ID = new Map<string, EnhancementEffect>(
-  AVAILABLE_EFFECTS.map((effect) => [effect.id, effect]),
+  listEffectDescriptors({ includeHidden: true }).map((descriptor) => [
+    descriptor.id,
+    descriptorToCatalogEffect(descriptor),
+  ]),
 );
 
 function describeType(value: unknown): string {
@@ -168,6 +228,19 @@ function collectEffectIssues(
   const catalog = EFFECTS_BY_ID.get(id);
   if (!catalog) {
     issues.push({ path: `${path}.id`, message: `Unknown effect id: ${id}` });
+    return;
+  }
+
+  // A well-formed new-style reference must name a backend this build knows about.
+  if (
+    typeof value.backendId === 'string' &&
+    value.backendId.length > 0 &&
+    !isKnownBackendId(value.backendId)
+  ) {
+    issues.push({
+      path: `${path}.backendId`,
+      message: `Unknown effect backend: ${value.backendId}`,
+    });
     return;
   }
 
@@ -434,13 +507,25 @@ export function sanitizeCustomModes(input: unknown): CustomMode[] {
         warn(`Skipping customModes[${modeIndex}].effects[${effectIndex}] with no valid id.`);
         return;
       }
-      const catalog = EFFECTS_BY_ID.get(rawEffect.id);
-      if (!catalog) {
+
+      const resolution = resolveEffectReference(rawEffect as unknown as EnhancementEffect);
+
+      // Forward-compat: a well-formed new-style reference for a backend that is
+      // not registered on this device is preserved verbatim, never dropped, so
+      // a cross-device sync is not silently destructive.
+      if (resolution.status === 'unresolved') {
+        effects.push({ ...(rawEffect as unknown as EnhancementEffect) });
+        return;
+      }
+
+      if (resolution.status === 'unknown') {
         warn(
           `Skipping customModes[${modeIndex}].effects[${effectIndex}]: unknown effect ${rawEffect.id}.`,
         );
         return;
       }
+
+      const catalog = descriptorToCatalogEffect(resolution.effect.descriptor);
       const params = sanitizeParams(catalog, rawEffect.params);
       effects.push(params ? { ...catalog, params } : { ...catalog });
     });

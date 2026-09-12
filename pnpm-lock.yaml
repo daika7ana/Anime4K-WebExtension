@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       anime4k-webgpu-async:
-        specifier: ^2.1.0
-        version: 2.1.0(@webgpu/types@0.1.72)
+        specifier: ^3.0.0
+        version: 3.0.0(@webgpu/types@0.1.72)
     devDependencies:
       '@eslint/js':
         specifier: ^10.0.1
@@ -613,10 +613,10 @@ packages:
   ajv@8.20.0:
     resolution: {integrity: sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA==}
 
-  anime4k-webgpu-async@2.1.0:
-    resolution: {integrity: sha512-8dNLp0khBtazRtVslbbokHCRc907EOEN55Ykn9D3JD+KSwvgVy2JfseHOCPudIpZ0b1vWEOq6XjIy5yg3jwFYQ==}
+  anime4k-webgpu-async@3.0.0:
+    resolution: {integrity: sha512-4Ufdi4f/ZAXs0k5gXp7rpWZsb/NBwA/+4aHJ4HnMcnfbag/6FkF6RRdV6mWpTkvqc6G3plqc/LflcnJhnlE7mw==}
     peerDependencies:
-      '@webgpu/types': ^0.1.38
+      '@webgpu/types': ^0.1.72
 
   ansi-regex@5.0.1:
     resolution: {integrity: sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ==}
@@ -2379,7 +2379,7 @@ snapshots:
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
-  anime4k-webgpu-async@2.1.0(@webgpu/types@0.1.72):
+  anime4k-webgpu-async@3.0.0(@webgpu/types@0.1.72):
     dependencies:
       '@webgpu/types': 0.1.72
 

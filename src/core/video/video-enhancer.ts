@@ -1,4 +1,5 @@
 import { getSettings, getEffectsForMode, getLocalSettings } from '@utils/settings';
+import { getEngineRegistryMode } from '@core/engines/flag';
 import { sendMessage } from '@utils/messaging';
 import { t } from '@utils/i18n';
 import { Renderer } from '@core/renderer';
@@ -239,6 +240,8 @@ export class VideoEnhancer {
     // Create diagnostics overlay if enabled in local settings
     const localSettings = await getLocalSettings();
     const showDiagnostics = localSettings.showDiagnostics;
+    // Temporary rollout flag: compile through the engine registry when enabled.
+    const engineRegistryMode = await getEngineRegistryMode();
     if (showDiagnostics) {
       const adapterInfo = await this.getAdapterInfo();
       this.diagnosticsOverlay = DiagnosticsOverlay.create(this.video, adapterInfo);
@@ -252,6 +255,8 @@ export class VideoEnhancer {
       targetDimensions,
       // GPU timings are only collected while the diagnostics overlay is shown.
       enableGpuTimings: showDiagnostics,
+      // Only surface a non-default mode so the default options shape is unchanged.
+      ...(engineRegistryMode !== 'legacy' ? { backendMode: engineRegistryMode } : {}),
       onError: async (error: Error) => {
         console.error('[Anime4KWebExt] Renderer runtime error:', error);
         const isCrossOriginError = error.name === 'SecurityError' && error.message.includes('tainted');

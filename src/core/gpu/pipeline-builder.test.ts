@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { installGPUMock, removeGPUMock, createMockGPUTexture } from '@/test/webgpu-mock';
 import type { MockGPUObjects } from '@/test/webgpu-mock';
 import type { EnhancementEffect, DestroyablePipeline, Dimensions } from '@/types';
+import { BUILTIN_MODES, getEffectsForMode } from '@utils/settings';
 import { PipelinePreWarmer } from './pipeline-prewarmer';
 
 // ─── Mock WGSL shader files ───
@@ -19,41 +20,123 @@ vi.mock('@core/utils/yield-utils', () => ({
   yieldToMain: vi.fn().mockResolvedValue(undefined),
 }));
 
-// ─── Mock anime4k-webgpu-async (library effects) ───
-class MockLibraryEffect {
-  descriptor: any;
-  paramUpdates: Record<string, any> = {};
-  constructor(descriptor: any) {
-    this.descriptor = descriptor;
+// ─── Hoisted fake library classes + construction recorder ───
+// Shared by the mocked `anime4k-webgpu-async` module (legacy path) and the
+// mocked backend registry (registry path) so parity compares the same classes.
+const mocks = vi.hoisted(() => {
+  interface ConstructedRecord {
+    effectName: string;
+    descriptor: any;
+    paramUpdates: Array<[string, any]>;
   }
-  pass() { return Promise.resolve(); }
-  getOutputTexture() { return this.descriptor.inputTexture; }
-  updateParam(key: string, value: any) { this.paramUpdates[key] = value; }
-  destroy() {}
-}
+  const constructed: ConstructedRecord[] = [];
 
-class MockDownscaleEffect {
-  descriptor: any;
-  constructor(descriptor: any) { this.descriptor = descriptor; }
-  pass() { return Promise.resolve(); }
-  getOutputTexture() { return this.descriptor.inputTexture; }
-  updateParam() {}
-  destroy() {}
-}
+  function makeEffectClass(effectName: string) {
+    return class MockEffect {
+      static effectName = effectName;
+      descriptor: any;
+      paramUpdates: Array<[string, any]> = [];
+      constructor(descriptor: any) {
+        this.descriptor = descriptor;
+        constructed.push({ effectName, descriptor, paramUpdates: this.paramUpdates });
+      }
+      pass() { return Promise.resolve(); }
+      getOutputTexture() { return this.descriptor.inputTexture; }
+      updateParam(key: string, value: any) { this.paramUpdates.push([key, value]); }
+      destroy() {}
+    };
+  }
 
-vi.mock('anime4k-webgpu-async', () => ({
-  ClampHighlights: MockLibraryEffect,
-  CNNM: MockLibraryEffect,
-  CNNx2M: MockLibraryEffect,
-  CNNVL: MockLibraryEffect,
-  CNNx2VL: MockLibraryEffect,
-  CNNUL: MockLibraryEffect,
-  CNNx2UL: MockLibraryEffect,
-  CNNSoftM: MockLibraryEffect,
-  CNNSoftVL: MockLibraryEffect,
-  DoG: MockLibraryEffect,
-  Downscale: MockDownscaleEffect,
-}));
+  const libraryClasses: Record<string, ReturnType<typeof makeEffectClass>> = {
+    ClampHighlights: makeEffectClass('ClampHighlights'),
+    CNNM: makeEffectClass('CNNM'),
+    CNNSoftM: makeEffectClass('CNNSoftM'),
+    CNNSoftVL: makeEffectClass('CNNSoftVL'),
+    CNNVL: makeEffectClass('CNNVL'),
+    CNNUL: makeEffectClass('CNNUL'),
+    GANUUL: makeEffectClass('GANUUL'),
+    CNNx2M: makeEffectClass('CNNx2M'),
+    CNNx2VL: makeEffectClass('CNNx2VL'),
+    DenoiseCNNx2VL: makeEffectClass('DenoiseCNNx2VL'),
+    CNNx2UL: makeEffectClass('CNNx2UL'),
+    GANx3L: makeEffectClass('GANx3L'),
+    GANx4UUL: makeEffectClass('GANx4UUL'),
+    DoG: makeEffectClass('DoG'),
+    BilateralMean: makeEffectClass('BilateralMean'),
+    Downscale: makeEffectClass('Downscale'),
+  };
+
+  return { constructed, libraryClasses, backendCompiles: 0 };
+});
+
+vi.mock('anime4k-webgpu-async', () => ({ ...mocks.libraryClasses }));
+
+// ─── Mock backend registry (registry path) ───
+// The fake Anime4K backend constructs the SAME hoisted classes the legacy path
+// resolves from the mocked library, so parity is a genuine builder-equivalence
+// assertion. `resolveEffectReference` is real (static descriptors).
+vi.mock('@core/engines/registry.js', () => {
+  // `ref.key` is the descriptor key for every resolved reference, so the fake
+  // backend needs no descriptor table — only the known upscale scale factors.
+  const scaleByKey: Record<string, number> = {
+    CNNx2M: 2,
+    CNNx2VL: 2,
+    DenoiseCNNx2VL: 2,
+    CNNx2UL: 2,
+    GANx3L: 3,
+    GANx4UUL: 4,
+  };
+
+  const anime4kBackend = {
+    backendId: 'anime4k',
+    displayName: 'Anime4K (parity fake)',
+    listEffects: () => [],
+    async compileEffect(ref: any, ctx: any) {
+      const Ctor = mocks.libraryClasses[ref.key];
+      if (!Ctor) throw new Error(`[parity-fake] no constructor for "${ref.key}"`);
+      mocks.backendCompiles += 1;
+
+      const pipeline = new Ctor({
+        device: ctx.device,
+        inputTexture: ctx.inputTexture,
+        nativeDimensions: ctx.currentDimensions,
+        targetDimensions: ctx.targetDimensions,
+      });
+      if (ctx.params) {
+        for (const [key, value] of Object.entries(ctx.params)) pipeline.updateParam(key, value);
+      }
+
+      const scale = scaleByKey[ref.key] ?? 1;
+      const outputDimensions = scale > 1
+        ? {
+          width: Math.ceil(ctx.currentDimensions.width * scale),
+          height: Math.ceil(ctx.currentDimensions.height * scale),
+        }
+        : ctx.currentDimensions;
+
+      return {
+        pipeline,
+        outputTexture: pipeline.getOutputTexture(),
+        outputDimensions,
+        profileLabel: ref.key,
+      };
+    },
+  };
+
+  const registry = {
+    register: vi.fn(),
+    getBackend: (backendId: string) => (backendId === 'anime4k' ? anime4kBackend : undefined),
+    getBackendAsync: async (backendId: string) => {
+      if (backendId === 'anime4k') return anime4kBackend;
+      throw new Error(`[parity-fake] backend "${backendId}" is not registered`);
+    },
+    listEffects: () => [],
+    getDescriptorById: () => undefined,
+    getDescriptorByBackendKey: () => undefined,
+  };
+
+  return { getBackendRegistry: () => registry };
+});
 
 // ─── Import the module under test AFTER mocks are set up ───
 import { paramsEqual, buildEffectPipelines } from './pipeline-builder';
@@ -444,4 +527,121 @@ describe('buildEffectPipelines', () => {
 
     expect(pipelines.length).toBe(1);
   });
+});
+
+// ─── Golden parity: legacy vs registry ───
+
+/** Comparable projection of one constructed pipeline descriptor. */
+function normalizeStep(record: { effectName: string; descriptor: any }) {
+  const descriptor = record.descriptor ?? {};
+  return {
+    effectName: record.effectName,
+    nativeDimensions: descriptor.nativeDimensions ?? null,
+    targetDimensions: descriptor.targetDimensions ?? null,
+    inputTexture: descriptor.inputTexture
+      ? { width: descriptor.inputTexture.width, height: descriptor.inputTexture.height }
+      : null,
+  };
+}
+
+describe('buildEffectPipelines golden parity (legacy vs registry)', () => {
+  let mock: MockGPUObjects;
+  // A no-op pre-warmer isolates Phase 1 construction so the parity snapshot only
+  // contains the real effect steps and intermediate Downscales.
+  const noopPreWarmer = {
+    warm: vi.fn().mockResolvedValue(undefined),
+    invalidate: vi.fn(),
+  } as unknown as PipelinePreWarmer;
+
+  beforeEach(() => {
+    mock = installGPUMock();
+    mocks.constructed.length = 0;
+  });
+
+  afterEach(() => {
+    removeGPUMock();
+  });
+
+  function buildParams(
+    effects: EnhancementEffect[],
+    labels: string[],
+    backendMode: 'legacy' | 'registry',
+  ) {
+    const video = { videoWidth: 1920, videoHeight: 1080 } as HTMLVideoElement;
+    return {
+      device: mock.device as unknown as GPUDevice,
+      videoFrameTexture: createMockGPUTexture(1920, 1080) as unknown as GPUTexture,
+      video,
+      targetDimensions: { width: 1920, height: 1080 } as Dimensions,
+      effects,
+      oldPipelines: [] as DestroyablePipeline[],
+      preWarmer: noopPreWarmer,
+      isStale: () => false,
+      labels,
+      backendMode,
+    };
+  }
+
+  async function run(effects: EnhancementEffect[], backendMode: 'legacy' | 'registry') {
+    mocks.constructed.length = 0;
+    mocks.backendCompiles = 0;
+    const labels: string[] = [];
+    const pipelines = await buildEffectPipelines(buildParams(effects, labels, backendMode));
+    return {
+      pipelineCount: pipelines.length,
+      labels: [...labels],
+      classSequence: mocks.constructed.map((record) => record.effectName),
+      constructors: mocks.constructed.map(normalizeStep),
+      paramUpdates: mocks.constructed.map((record) =>
+        record.paramUpdates.map(([key, value]) => [key, value]),
+      ),
+      backendCompiles: mocks.backendCompiles,
+    };
+  }
+
+  const tiers = ['performance', 'balanced', 'quality', 'ultra'] as const;
+
+  const builtInCases: Array<[string, EnhancementEffect[]]> = [];
+  for (const mode of BUILTIN_MODES) {
+    for (const tier of tiers) {
+      builtInCases.push([`${mode.baseMode} / ${tier}`, getEffectsForMode(mode, tier)]);
+    }
+  }
+
+  // Extra chains exercise the `updateParam` path (built-in chains carry no params).
+  const extraCases: Array<[string, EnhancementEffect[]]> = [
+    ['DoG params', [
+      { id: 'anime4k/Deblur/DoG', name: 'Deblur (DoG)', className: 'DoG', params: { strength: 7 } },
+    ]],
+    ['BilateralMean params', [
+      {
+        id: 'anime4k/Denoise/BilateralMean',
+        name: 'Denoise (Bilateral Mean)',
+        className: 'BilateralMean',
+        params: { strength: 0.35, strength2: 3 },
+      },
+    ]],
+    ['upscale + params + intermediate Downscale', [
+      { id: 'anime4k/Helper/ClampHighlights', name: 'Clamp Highlights', className: 'ClampHighlights' },
+      { id: 'anime4k/Deblur/DoG', name: 'Deblur (DoG)', className: 'DoG', params: { strength: 7 } },
+      { id: 'anime4k/Upscale/CNNx2M', name: 'Upscale CNN x2 (M)', className: 'CNNx2M', upscaleFactor: 2 },
+      { id: 'anime4k/Upscale/CNNx2M', name: 'Upscale CNN x2 (M)', className: 'CNNx2M', upscaleFactor: 2 },
+    ]],
+  ];
+
+  for (const [name, effects] of [...builtInCases, ...extraCases]) {
+    it(`is identical for ${name}`, async () => {
+      const legacy = await run(effects, 'legacy');
+      const registry = await run(effects, 'registry');
+
+      // Registry mode must actually compile through the backend for every
+      // effect; a silent legacy fallback would make this comparison vacuous.
+      expect(legacy.backendCompiles).toBe(0);
+      expect(registry.backendCompiles).toBe(effects.length);
+
+      const { backendCompiles: _legacyCompiles, ...legacySnapshot } = legacy;
+      const { backendCompiles: _registryCompiles, ...registrySnapshot } = registry;
+      expect(registrySnapshot).toEqual(legacySnapshot);
+    });
+  }
 });

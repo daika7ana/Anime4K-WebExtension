@@ -13,7 +13,8 @@ import type {
   EnhancementEffect,
   PerformanceTier,
 } from '../types';
-import { AVAILABLE_EFFECTS } from './effects-map';
+import { descriptorToCatalogEffect } from './effects-map';
+import { resolveEffectReference } from './effect-registry';
 import { resolveEffectChain } from './effect-chain-templates';
 import { getSnapshot, invalidate, isStale, setSnapshot } from './settings-snapshot';
 import {
@@ -70,18 +71,25 @@ const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
 };
 
 /**
- * Ensure effects in custom modes stay in sync with AVAILABLE_EFFECTS
+ * Ensure effects in custom modes stay in sync with the effective catalog.
+ *
+ * Each persisted effect is resolved through the engine seam:
+ * - resolved  → canonicalized to the descriptor's catalog shape, merging user
+ *               params over catalog defaults (user values win);
+ * - unresolved → a well-formed new-style reference for a backend this device
+ *               does not have is preserved as-is (cross-device forward compat);
+ * - unknown   → legacy entry with unknown id AND className, dropped.
  */
 export function synchronizeEffectsForCustomModes(modes: CustomMode[]): CustomMode[] {
-  const availableEffectsMap = new Map(
-    AVAILABLE_EFFECTS.map(e => [e.id, e])
-  );
-
   return modes.map(mode => {
     const synchronizedEffects = mode.effects
       .map(effectInMode => {
-        const catalogEffect = availableEffectsMap.get(effectInMode.id);
-        if (!catalogEffect) return null;
+        const resolution = resolveEffectReference(effectInMode);
+
+        if (resolution.status === 'unresolved') return effectInMode;
+        if (resolution.status === 'unknown') return null;
+
+        const catalogEffect = descriptorToCatalogEffect(resolution.effect.descriptor);
         // Preserve user-customized params (e.g. CAS sharpness) over catalog defaults
         if (effectInMode.params && Object.keys(effectInMode.params).length > 0) {
           return { ...catalogEffect, params: { ...catalogEffect.params, ...effectInMode.params } };

@@ -1,6 +1,7 @@
 // ===== Anime4K Library Types =====
 import type { Anime4KPipeline } from 'anime4k-webgpu-async';
 import type { ProfilerSnapshot } from './core/gpu/gpu-timestamp-profiler';
+import type { EngineRegistryMode } from './core/engines/flag';
 
 // ===== CSS Module Declarations =====
 declare module "*.css";
@@ -22,6 +23,8 @@ interface EnhancementEffect {
   id: string;       // Unique ID, e.g., "anime4k/Upscale/CNNx2VL"
   name: string;     // Display name, e.g., "Upscale CNNx2VL"
   className: string; // Class name used for instantiation in code, e.g., "CNNx2VL"
+  backendId?: string; // Engine backend id, e.g. "anime4k" | "core"; absent ⇒ resolve by id/className
+  key?: string;       // Backend-local effect key; defaults to className
   params?: Record<string, number>; // Effect parameter configuration (all numeric values)
   upscaleFactor?: number; // Upscale factor of the effect, e.g. 2 means 2x upscale
 }
@@ -224,6 +227,12 @@ interface RendererOptions {
    * Profiling is silently skipped when the feature is unavailable.
    */
   enableGpuTimings?: boolean;
+  /**
+   * Effect-compilation path. Omitted/`'legacy'` keeps the legacy per-className
+   * dispatch; `'registry'` compiles through the engine backend seam. Temporary
+   * rollout flag (see `src/core/engines/flag.ts`).
+   */
+  backendMode?: EngineRegistryMode;
 }
 
 // Export interfaces for use by other modules

@@ -76,6 +76,8 @@ export class Renderer {
   private profiler: GpuTimestampProfiler | null = null;
   /** Generation counter to prevent concurrent buildPipelines() calls from clobbering each other */
   private buildGeneration = 0;
+  /** Effect-compilation path forwarded to the pipeline builder (temporary rollout flag). */
+  private backendMode: RendererOptions['backendMode'];
 
   // --- Objects for the final rendering stage ---
   private renderBindGroupLayout!: GPUBindGroupLayout;
@@ -97,6 +99,7 @@ export class Renderer {
     this.onFrameRendered = options.onFrameRendered;
     this.onProgress = options.onProgress;
     this.enableGpuTimings = options.enableGpuTimings ?? false;
+    this.backendMode = options.backendMode;
   }
 
   /**
@@ -282,6 +285,7 @@ export class Renderer {
         onProgress: this.onProgress,
         isStale: () => this.buildGeneration !== generation,
         labels, // Out-param filled with one label per built pipeline, in encode order
+        backendMode: this.backendMode,
       });
       if (this.buildGeneration !== generation) return; // Superseded
       this.pipelines = pipelines;

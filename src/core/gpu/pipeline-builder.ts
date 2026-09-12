@@ -9,13 +9,21 @@
  *  - Shallow params comparison (replaces JSON.stringify)
  */
 import type { Dimensions, EnhancementEffect, CustomEffectDescriptor, DestroyablePipeline, Anime4KClassMap } from '@/types';
+import type { BackendRegistry } from 'anime4k-webgpu-async';
+import type { EngineRegistryMode } from '@core/engines/flag';
 import { CAS } from '@core/effects/cas';
 import { ColorAdjust } from '@core/effects/color-adjust';
 import { Debanding } from '@core/effects/debanding';
 import { t } from '@utils/i18n';
 import { yieldToMain } from '@core/utils/yield-utils';
+import { gpuResourceCache } from '@core/gpu/gpu-resource-cache';
+import { resolveEffectReference, type EffectResolution } from '@utils/effect-registry';
 import { PipelinePreWarmer } from './pipeline-prewarmer';
+import type { PreWarmEffectRef, PreWarmTarget } from './pipeline-prewarmer';
 import { computeRemainingUpscaleFactors, planIntermediateDownscale } from './effect-chain';
+
+/** Re-exported so engine adapters can type against the custom-effect registry. */
+export type { CustomEffectDescriptor };
 
 /**
  * Registry of custom (non-anime4k-webgpu-async) effects.
@@ -25,7 +33,7 @@ import { computeRemainingUpscaleFactors, planIntermediateDownscale } from './eff
  * or prewarmer. The descriptor builder receives the live effect params so per-effect
  * values (e.g. strength, threshold) flow through uniformly.
  */
-const CUSTOM_EFFECTS: Record<string, CustomEffectDescriptor> = {
+export const CUSTOM_EFFECTS: Record<string, CustomEffectDescriptor> = {
   CAS: {
     EffectClass: CAS,
     getDescriptor: (device, inputTexture, params) => ({
@@ -62,6 +70,12 @@ const CUSTOM_EFFECTS: Record<string, CustomEffectDescriptor> = {
 let cachedAnime4KModule: typeof import('anime4k-webgpu-async') | null = null;
 
 /**
+ * Cached engine backend registry. Only populated in registry mode; loaded
+ * lazily so a static import never inlines the monolithic library.
+ */
+let cachedBackendRegistry: BackendRegistry | null = null;
+
+/**
  * Shallow comparison of two params objects.
  * Avoids JSON.stringify overhead and key-order sensitivity.
  */
@@ -96,6 +110,22 @@ interface BuildPipelinesParams {
    * pipeline. Left untouched when omitted.
    */
   labels?: string[];
+  /**
+   * Effect-compilation path. Omitted or `'legacy'` keeps the legacy
+   * per-className dispatch; `'registry'` compiles through the engine seam.
+   */
+  backendMode?: EngineRegistryMode;
+}
+
+/** Result of constructing one effect pipeline (legacy or registry path). */
+interface EffectStep {
+  pipeline: DestroyablePipeline;
+  /** HUD/profiler label for the pipeline. */
+  label: string;
+  /** Whether the builder should consider an intermediate Downscale after it. */
+  scaleApplied: boolean;
+  /** Texture dimensions after this effect (before any intermediate Downscale). */
+  postDimensions: Dimensions;
 }
 
 /**
@@ -112,7 +142,7 @@ interface BuildPipelinesParams {
 export async function buildEffectPipelines(params: BuildPipelinesParams): Promise<DestroyablePipeline[]> {
   const {
     device, videoFrameTexture, video, targetDimensions, effects,
-    oldPipelines, preWarmer: pipelinePreWarmer, onProgress, isStale, labels,
+    oldPipelines, preWarmer: pipelinePreWarmer, onProgress, isStale, labels, backendMode,
   } = params;
 
   // Wait for the GPU queue to finish before destroying old pipelines to avoid resource contention
@@ -143,6 +173,103 @@ export async function buildEffectPipelines(params: BuildPipelinesParams): Promis
   }
   const anime4kModule = cachedAnime4KModule;
 
+  // --- Effect resolution and per-effect geometry ---
+  // In legacy mode `resolutions` stays null and `upscaleFactors` reproduces
+  // `computeRemainingUpscaleFactors(effects)` exactly, keeping legacy geometry
+  // unchanged. In registry mode the descriptor's declared scale is the
+  // authority (identical to `effect.upscaleFactor` for every current effect),
+  // falling back to `effect.upscaleFactor` for unresolved legacy entries.
+  const useRegistry = backendMode === 'registry';
+  const resolutions: EffectResolution[] | null = useRegistry
+    ? effects.map((effect) => resolveEffectReference(effect))
+    : null;
+
+  // Load the composed backend registry lazily: a static import would inline the
+  // monolithic `anime4k-webgpu-async` UMD into the content chunk.
+  if (useRegistry && !cachedBackendRegistry) {
+    // Explicit `.js` specifier: TypeScript's node16 dynamic-import resolution
+    // requires an extension; webpack's extensionAlias maps it to the `.ts`.
+    const { getBackendRegistry } = await import('@core/engines/registry.js');
+    cachedBackendRegistry = getBackendRegistry();
+  }
+  const registry = useRegistry ? cachedBackendRegistry : null;
+
+  /** Pre-warm targets: engine identity + descriptor capabilities (registry mode). */
+  const buildPrewarmTargets = (): PreWarmTarget[] =>
+    effects.map((effect, i) => {
+      const resolution = resolutions?.[i];
+      if (resolution?.status === 'resolved') {
+        const descriptor = resolution.effect.descriptor;
+        return {
+          ref: {
+            backendId: descriptor.backendId,
+            key: descriptor.key,
+            className: effect.className,
+          },
+          capabilities: descriptor.capabilities,
+        };
+      }
+      return {
+        ref: {
+          backendId: effect.backendId,
+          key: effect.key ?? effect.className,
+          className: effect.className,
+        },
+      };
+    });
+
+  /** Legacy dummy construction (CUSTOM_EFFECTS first, then the anime4k class map). */
+  const compileLegacyDummy = (
+    ref: PreWarmEffectRef,
+    dev: GPUDevice,
+    tex: GPUTexture,
+  ): DestroyablePipeline | null => {
+    const custom = CUSTOM_EFFECTS[ref.className];
+    if (custom) {
+      // Prewarm uses default params; the real build supplies effect.params.
+      return new custom.EffectClass(custom.getDescriptor(dev, tex));
+    }
+    const EffectClass = (anime4kModule as unknown as Anime4KClassMap)[ref.className];
+    if (!EffectClass) return null;
+    return new EffectClass({
+      device: dev,
+      inputTexture: tex,
+      nativeDimensions: { width: 1, height: 1 },
+      targetDimensions: { width: 1, height: 1 },
+    });
+  };
+
+  /** Registry dummy construction; falls back to the legacy class map per effect. */
+  const compileRegistryDummy = async (
+    ref: PreWarmEffectRef,
+    dev: GPUDevice,
+    tex: GPUTexture,
+  ): Promise<DestroyablePipeline | null> => {
+    if (!ref.backendId || !registry) {
+      return compileLegacyDummy(ref, dev, tex);
+    }
+    let backend;
+    try {
+      backend = await registry.getBackendAsync(ref.backendId);
+    } catch {
+      // Unregistered backend: fall back to the legacy class map (may return null).
+      return compileLegacyDummy(ref, dev, tex);
+    }
+    const node = await backend.compileEffect(
+      { id: ref.key, backendId: ref.backendId, key: ref.key },
+      {
+        device: dev,
+        inputTexture: tex,
+        sourceDimensions: { width: 1, height: 1 },
+        currentDimensions: { width: 1, height: 1 },
+        targetDimensions: { width: 1, height: 1 },
+        resources: gpuResourceCache,
+        isStale: () => false,
+      },
+    );
+    return node.pipeline;
+  };
+
   // --- Phase 0: Speculative shader pre-warming ---
   // Construct dummy 1×1 pipelines to trigger driver-level shader compilation and caching.
   // The real pipeline construction in Phase 1 will then hit the cache (~1-3ms instead of ~25ms).
@@ -150,37 +277,39 @@ export async function buildEffectPipelines(params: BuildPipelinesParams): Promis
   // and the driver cache makes Phase 1 fast regardless.
   onProgress?.(t('warmupShadersProgress', '⏳ Compiling shaders...'));
   try {
-    await pipelinePreWarmer.warm(device, effects, (className, dev, tex) => {
-      const custom = CUSTOM_EFFECTS[className];
-      if (!custom) return null;
-      // Prewarm uses default params; the real build supplies effect.params.
-      return {
-        EffectClass: custom.EffectClass,
-        descriptor: custom.getDescriptor(dev, tex),
-      };
-    });
+    await pipelinePreWarmer.warm(
+      device,
+      buildPrewarmTargets(),
+      useRegistry ? compileRegistryDummy : compileLegacyDummy,
+    );
   } catch (e) {
     console.warn('[Anime4KWebExt] Phase 0 pre-warm failed (non-fatal):', e);
   }
   if (isStale()) return []; // Superseded
 
-  const remainingUpscaleFactors = computeRemainingUpscaleFactors(effects);
+  const upscaleFactors = effects.map((effect, i) => {
+    const resolution = resolutions?.[i];
+    if (resolution?.status === 'resolved') {
+      return resolution.effect.descriptor.dimensionBehavior.scale ?? 1;
+    }
+    return effect.upscaleFactor ?? 1;
+  });
+  const remainingUpscaleFactors = computeRemainingUpscaleFactors(
+    upscaleFactors.map((upscaleFactor) => ({ upscaleFactor })),
+  );
 
   // If needed, get the Downscale class
-  const needsDownscaling = effects.some((effect, i) =>
-    (effect.upscaleFactor ?? 1) > 1 && remainingUpscaleFactors[i] > 1
+  const needsDownscaling = upscaleFactors.some(
+    (factor, i) => factor > 1 && remainingUpscaleFactors[i] > 1,
   );
   const DownscaleClass = needsDownscaling ? anime4kModule.Downscale : null;
 
-  // --- Phase 1: Create all pipeline instances (no GPU submission) ---
-  // Each pipeline constructor may trigger synchronous GPU shader compilation (200-500ms on first run),
-  // so we yield the main thread after each pipeline creation to keep the UI responsive.
-  for (let i = 0; i < effects.length; i++) {
-    // Report progress
-    const loadingMsg = t('loadingEffect', `⏳ Loading effect ${i + 1}/${effects.length}...`, [String(i + 1), String(effects.length)]);
-    onProgress?.(loadingMsg, i + 1, effects.length);
-
-    const effect = effects[i];
+  /**
+   * Legacy per-effect construction (CUSTOM_EFFECTS first, then the dynamic
+   * anime4k class map). Also the per-effect fallback for registry mode, so the
+   * legacy construction logic exists exactly once.
+   */
+  const buildLegacyStep = (effect: EnhancementEffect): EffectStep | null => {
     let pipeline: DestroyablePipeline | null = null;
 
     // Check for custom effects first (not from anime4k-webgpu-async library)
@@ -210,37 +339,104 @@ export async function buildEffectPipelines(params: BuildPipelinesParams): Promis
       }
     }
 
-    if (pipeline) {
-      pipelines.push(pipeline);
-      labels?.push(effect.className);
-      currentTexture = pipeline.getOutputTexture();
+    if (!pipeline) return null;
 
-      if (effect.upscaleFactor) {
-        curWidth *= effect.upscaleFactor;
-        curHeight *= effect.upscaleFactor;
+    return {
+      pipeline,
+      label: effect.className,
+      // Truthiness (not `> 1`) matches the legacy `if (effect.upscaleFactor)` guard.
+      scaleApplied: !!effect.upscaleFactor,
+      postDimensions: effect.upscaleFactor
+        ? { width: curWidth * effect.upscaleFactor, height: curHeight * effect.upscaleFactor }
+        : { width: curWidth, height: curHeight },
+    };
+  };
 
-        if (DownscaleClass) {
-          const intermediate = planIntermediateDownscale({
-            curWidth,
-            curHeight,
+  // --- Phase 1: Create all pipeline instances (no GPU submission) ---
+  // Each pipeline constructor may trigger synchronous GPU shader compilation (200-500ms on first run),
+  // so we yield the main thread after each pipeline creation to keep the UI responsive.
+  for (let i = 0; i < effects.length; i++) {
+    // Report progress
+    const loadingMsg = t('loadingEffect', `⏳ Loading effect ${i + 1}/${effects.length}...`, [String(i + 1), String(effects.length)]);
+    onProgress?.(loadingMsg, i + 1, effects.length);
+
+    const effect = effects[i];
+    let step: EffectStep | null;
+
+    if (useRegistry && registry && resolutions) {
+      const resolution = resolutions[i];
+
+      if (resolution.status === 'resolved') {
+        const { descriptor, reference } = resolution.effect;
+        try {
+          const backend = await registry.getBackendAsync(descriptor.backendId);
+          const node = await backend.compileEffect(reference, {
+            device,
+            inputTexture: currentTexture,
+            sourceDimensions: { width: video.videoWidth, height: video.videoHeight },
+            currentDimensions: { width: curWidth, height: curHeight },
             targetDimensions,
-            remainingFactor: remainingUpscaleFactors[i],
+            params: effect.params,
+            resources: gpuResourceCache,
+            isStale,
           });
-          if (intermediate) {
-            const intermediateDownscale = new DownscaleClass({
-              device,
-              inputTexture: currentTexture,
-              targetDimensions: intermediate,
-            });
-            pipelines.push(intermediateDownscale);
-            labels?.push('Downscale');
+          step = {
+            pipeline: node.pipeline,
+            label: node.profileLabel,
+            scaleApplied: descriptor.dimensionBehavior.kind === 'scale',
+            postDimensions: node.outputDimensions,
+          };
+        } catch (e) {
+          console.warn(
+            `[Anime4KWebExt] Registry compile failed for "${effect.className}" `
+            + `(backend "${descriptor.backendId}"); falling back to legacy construction.`,
+            e,
+          );
+          step = buildLegacyStep(effect);
+        }
+      } else {
+        // New-style references for unregistered backends are preserved in
+        // storage but cannot be compiled here; legacy entries unknown to the
+        // catalog are equally unbuildable. Fall back per effect, never crash.
+        console.warn(
+          `[Anime4KWebExt] ${resolution.status === 'unresolved' ? 'Unresolved new-style' : 'Unknown legacy'} `
+          + `effect (id "${effect.id}", className "${effect.className}"); falling back to legacy construction.`,
+        );
+        step = buildLegacyStep(effect);
+      }
+    } else {
+      step = buildLegacyStep(effect);
+    }
 
-            currentTexture = intermediateDownscale.getOutputTexture();
-            curWidth = intermediate.width;
-            curHeight = intermediate.height;
-          }
+    if (step) {
+      pipelines.push(step.pipeline);
+      labels?.push(step.label);
+      currentTexture = step.pipeline.getOutputTexture();
+
+      let postDimensions = step.postDimensions;
+      if (step.scaleApplied && DownscaleClass) {
+        const intermediate = planIntermediateDownscale({
+          curWidth: postDimensions.width,
+          curHeight: postDimensions.height,
+          targetDimensions,
+          remainingFactor: remainingUpscaleFactors[i],
+        });
+        if (intermediate) {
+          const intermediateDownscale = new DownscaleClass({
+            device,
+            inputTexture: currentTexture,
+            targetDimensions: intermediate,
+          });
+          pipelines.push(intermediateDownscale);
+          labels?.push('Downscale');
+
+          currentTexture = intermediateDownscale.getOutputTexture();
+          postDimensions = intermediate;
         }
       }
+
+      curWidth = postDimensions.width;
+      curHeight = postDimensions.height;
     }
 
     // Yield to let the browser process input events between synchronous GPU operations.

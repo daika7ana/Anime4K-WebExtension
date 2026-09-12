@@ -19,6 +19,8 @@ import type { EnhancementEffect, GPUBenchmarkResult } from '../types';
 const CAS = AVAILABLE_EFFECTS.find(e => e.className === 'CAS')!;
 const DEBANDING = AVAILABLE_EFFECTS.find(e => e.className === 'Debanding')!;
 const CLAMP = AVAILABLE_EFFECTS.find(e => e.className === 'ClampHighlights')!;
+const DOG = AVAILABLE_EFFECTS.find(e => e.className === 'DoG')!;
+const BILATERAL = AVAILABLE_EFFECTS.find(e => e.className === 'BilateralMean')!;
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -150,6 +152,50 @@ describe('validateModesImport', () => {
     expect(result.issues.some(i => /Unknown parameter/.test(i.message))).toBe(true);
   });
 
+  it('rejects out-of-range DoG / BilateralMean / Debanding params', () => {
+    const dog = validateModesImport([
+      validMode({ effects: [{ id: DOG.id, params: { strength: 0.5 } }] }),
+    ]);
+    expect(dog.ok).toBe(false);
+
+    const bilateral = validateModesImport([
+      validMode({ effects: [{ id: BILATERAL.id, params: { strength2: 99 } }] }),
+    ]);
+    expect(bilateral.ok).toBe(false);
+
+    const debanding = validateModesImport([
+      validMode({ effects: [{ id: DEBANDING.id, params: { strength: 2 } }] }),
+    ]);
+    expect(debanding.ok).toBe(false);
+  });
+
+  it('rejects an effect whose backendId is not registered', () => {
+    const result = validateModesImport([
+      validMode({ effects: [{ id: CAS.id, backendId: 'artcnn', key: 'CAS' }] }),
+    ]);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(
+      result.issues.some(
+        i =>
+          i.path === 'modes[0].effects[0].backendId' && /Unknown effect backend/.test(i.message),
+      ),
+    ).toBe(true);
+  });
+
+  it('accepts a valid new-style core reference', () => {
+    const result = validateModesImport([
+      validMode({
+        effects: [
+          { id: DEBANDING.id, backendId: 'core', key: 'Debanding', params: { strength: 0.3 } },
+        ],
+      }),
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value[0].effects[0].backendId).toBe('core');
+  });
+
   it('rejects a mode missing its name', () => {
     const result = validateModesImport([{ effects: [] }]);
     expect(result.ok).toBe(false);
@@ -230,6 +276,28 @@ describe('EFFECT_PARAM_BOUNDS', () => {
       }
     }
   });
+
+  it('derives schema-backed bounds for the core CAS / Debanding effects', () => {
+    expect(EFFECT_PARAM_BOUNDS.CAS).toEqual({
+      sharpness: { min: 0, max: 1, defaultValue: 0.5 },
+    });
+    expect(EFFECT_PARAM_BOUNDS.Debanding).toEqual({
+      strength: { min: 0, max: 1, defaultValue: 0.5 },
+      bandThreshold: { min: 0, max: 1, defaultValue: 0.08 },
+    });
+  });
+
+  it('keeps exact legacy bounds for descriptors without a paramsSchema', () => {
+    // The library Anime4K DoG / BilateralMean descriptors declare no schema, so
+    // validation must fall back to the hardcoded table and keep rejecting.
+    expect(EFFECT_PARAM_BOUNDS.DoG).toEqual({
+      strength: { min: 1, max: 10, defaultValue: 4 },
+    });
+    expect(EFFECT_PARAM_BOUNDS.BilateralMean).toEqual({
+      strength: { min: 0, max: 1, defaultValue: 0.2 },
+      strength2: { min: 0.5, max: 5, defaultValue: 2 },
+    });
+  });
 });
 
 describe('sanitizeCustomModes', () => {
@@ -257,6 +325,24 @@ describe('sanitizeCustomModes', () => {
     ];
     const result = sanitizeCustomModes(input);
     expect(result[0].effects.map(e => e.id)).toEqual([CAS.id]);
+  });
+
+  it('preserves a well-formed new-style reference for an unregistered backend', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const newStyle = {
+      id: 'artcnn/ArtCNN/C4F16',
+      name: 'ArtCNN C4F16',
+      className: 'C4F16',
+      backendId: 'artcnn',
+      key: 'C4F16',
+      params: { variant: 1 },
+    };
+    const input = [
+      { id: 'custom-1', name: 'M', isBuiltIn: false, effects: [newStyle] },
+    ];
+    const result = sanitizeCustomModes(input);
+    expect(result[0].effects).toHaveLength(1);
+    expect(result[0].effects[0]).toEqual(newStyle);
   });
 
   it('falls back to catalog defaults for out-of-range params', () => {

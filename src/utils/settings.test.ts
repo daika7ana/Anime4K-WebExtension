@@ -24,7 +24,7 @@ import {
 } from './settings-snapshot';
 import { AVAILABLE_EFFECTS } from './effects-map';
 import { resolveEffectChain } from './effect-chain-templates';
-import type { CustomMode, BuiltInMode, PerformanceTier } from '../types';
+import type { CustomMode, BuiltInMode, EnhancementEffect, PerformanceTier } from '../types';
 
 describe('BUILTIN_MODES', () => {
   it('contains exactly 6 modes', () => {
@@ -120,6 +120,106 @@ describe('synchronizeEffectsForCustomModes', () => {
     expect(result).toHaveLength(2);
     expect(result[0].effects).toHaveLength(1);
     expect(result[1].effects).toHaveLength(0);
+  });
+
+  it('canonicalizes a resolved anime4k effect through the seam', () => {
+    const modes: CustomMode[] = [
+      {
+        id: 'custom-1',
+        name: 'Test',
+        isBuiltIn: false,
+        effects: [{ id: 'anime4k/Restore/CNNVL', name: 'Old Name', className: 'CNNVL' }],
+      },
+    ];
+    const result = synchronizeEffectsForCustomModes(modes);
+    expect(result[0].effects[0]).toEqual({
+      id: 'anime4k/Restore/CNNVL',
+      name: 'Restore CNN (VL)',
+      className: 'CNNVL',
+      backendId: 'anime4k',
+      key: 'CNNVL',
+    });
+  });
+
+  it('resolves core effects (CAS/Debanding) through the seam with default params', () => {
+    const modes: CustomMode[] = [
+      {
+        id: 'custom-1',
+        name: 'Test',
+        isBuiltIn: false,
+        effects: [
+          { id: 'anime4k/Sharpen/CAS', name: 'Old CAS', className: 'CAS' },
+          { id: 'anime4k/Debanding/Debanding', name: 'Old DB', className: 'Debanding' },
+        ],
+      },
+    ];
+    const result = synchronizeEffectsForCustomModes(modes);
+    expect(result[0].effects[0]).toEqual({
+      id: 'anime4k/Sharpen/CAS',
+      name: 'Contrast Adaptive Sharpening (CAS)',
+      className: 'CAS',
+      backendId: 'core',
+      key: 'CAS',
+      params: { sharpness: 0.5 },
+    });
+    expect(result[0].effects[1]).toEqual({
+      id: 'anime4k/Debanding/Debanding',
+      name: 'Debanding',
+      className: 'Debanding',
+      backendId: 'core',
+      key: 'Debanding',
+      params: { strength: 0.5, bandThreshold: 0.08 },
+    });
+  });
+
+  it('preserves a well-formed new-style unknown reference verbatim', () => {
+    const newStyle: EnhancementEffect = {
+      id: 'artcnn/ArtCNN/C4F16',
+      name: 'ArtCNN C4F16',
+      className: 'C4F16',
+      backendId: 'artcnn',
+      key: 'C4F16',
+      params: { variant: 1 },
+    };
+    const modes: CustomMode[] = [
+      { id: 'custom-1', name: 'Test', isBuiltIn: false, effects: [newStyle] },
+    ];
+    const result = synchronizeEffectsForCustomModes(modes);
+    expect(result[0].effects).toHaveLength(1);
+    expect(result[0].effects[0]).toEqual(newStyle);
+  });
+
+  it('drops a legacy unknown effect (unknown id and className)', () => {
+    const modes: CustomMode[] = [
+      {
+        id: 'custom-1',
+        name: 'Test',
+        isBuiltIn: false,
+        effects: [{ id: 'legacy/unknown', name: 'Ghost', className: 'Ghost' }],
+      },
+    ];
+    const result = synchronizeEffectsForCustomModes(modes);
+    expect(result[0].effects).toHaveLength(0);
+  });
+
+  it('merges user params over catalog defaults, keeping defaults for omitted keys', () => {
+    const modes: CustomMode[] = [
+      {
+        id: 'custom-1',
+        name: 'Test',
+        isBuiltIn: false,
+        effects: [
+          {
+            id: 'anime4k/Debanding/Debanding',
+            name: 'Debanding',
+            className: 'Debanding',
+            params: { strength: 0.2 },
+          },
+        ],
+      },
+    ];
+    const result = synchronizeEffectsForCustomModes(modes);
+    expect(result[0].effects[0].params).toEqual({ strength: 0.2, bandThreshold: 0.08 });
   });
 });
 

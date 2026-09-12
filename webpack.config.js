@@ -59,6 +59,12 @@ module.exports = (env, argv) => {
     },
     resolve: {
       extensions: [".ts", ".js"],
+      // Dynamic imports of TypeScript modules use explicit `.js` specifiers
+      // (required by TS node16 ESM resolution for `import()`); map them back
+      // to the `.ts` sources at bundle time.
+      extensionAlias: {
+        ".js": [".ts", ".js"],
+      },
       alias: {
         "@": path.resolve(__dirname, "src"),
         "@core": path.resolve(__dirname, "src/core"),
