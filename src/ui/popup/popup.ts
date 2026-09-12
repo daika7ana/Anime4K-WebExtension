@@ -11,6 +11,7 @@ import { t, applyI18n } from '@utils/i18n';
 import type { PerformanceTier } from '../../types';
 import { initTierControls } from './tier-controls';
 import { initModeControls } from './mode-controls';
+import { initModeGuidance } from './mode-guidance';
 import { initWhitelistActions } from './whitelist-actions';
 
 // Current tier state
@@ -37,6 +38,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const tierButtons = document.querySelectorAll<HTMLButtonElement>('.tier-btn');
   const modeSelect = document.getElementById('mode-select') as HTMLSelectElement;
   const resolutionSelect = document.getElementById('resolution-select') as HTMLSelectElement;
+  const modeDescription = document.getElementById('mode-description');
   const saveButton = document.getElementById('save-settings') as HTMLButtonElement;
   const whitelistToggle = document.getElementById('whitelist-toggle') as HTMLInputElement;
   const addCurrentPageBtn = document.getElementById('add-current-page') as HTMLButtonElement;
@@ -90,6 +92,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     },
   });
 
+  // Source-type description for the selected mode (hidden for custom modes).
+  const modeGuidance = initModeGuidance({
+    modeSelect,
+    descriptionEl: modeDescription,
+  });
+
   // Initialize whitelist actions
   initWhitelistActions({
     whitelistToggle,
@@ -115,6 +123,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     tierControls.updateActiveTier(currentTier);
     modeControls.render(currentSettings);
     resolutionSelect.value = currentSettings.targetResolutionSetting;
+    modeGuidance.update();
     whitelistToggle.checked = currentSettings.whitelistEnabled;
     colorGradingToggle.checked = currentSettings.colorGrading?.enabled ?? false;
     updateStatusBadge('Ready');

@@ -54,41 +54,16 @@ export const MODES_IMPORT_VERSION = 1;
 /**
  * Bounds for a single effect parameter.
  *
- * The ranges mirror the slider configuration in
- * `src/ui/options/param-sliders.ts` (the source of truth for what the UI can
- * produce). Values outside these bounds cannot be produced by the UI and must
- * therefore be rejected when they arrive through an import.
+ * The ranges are derived from each descriptor's `paramsSchema` (the same
+ * metadata that drives `src/ui/options/param-sliders.ts`). Values outside these
+ * bounds cannot be produced by the UI and must therefore be rejected when they
+ * arrive through an import.
  */
 export interface EffectParamBound {
   readonly min: number;
   readonly max: number;
   readonly defaultValue: number;
 }
-
-/**
- * Legacy fallback bounds, used for descriptors that declare no `paramsSchema`
- * — currently the library Anime4K DoG / BilateralMean entries. Values are kept
- * exactly in sync with `PARAM_REGISTRY` in `src/ui/options/param-sliders.ts`
- * and with the catalog defaults in `src/utils/effects-map.ts`.
- */
-const LEGACY_EFFECT_PARAM_BOUNDS: Readonly<
-  Record<string, Readonly<Record<string, EffectParamBound>>>
-> = {
-  CAS: {
-    sharpness: { min: 0, max: 1, defaultValue: 0.5 },
-  },
-  DoG: {
-    strength: { min: 1, max: 10, defaultValue: 4 },
-  },
-  BilateralMean: {
-    strength: { min: 0, max: 1, defaultValue: 0.2 },
-    strength2: { min: 0.5, max: 5, defaultValue: 2 },
-  },
-  Debanding: {
-    strength: { min: 0, max: 1, defaultValue: 0.5 },
-    bandThreshold: { min: 0, max: 1, defaultValue: 0.08 },
-  },
-};
 
 /** Extract numeric param bounds from a descriptor's declared `paramsSchema`. */
 function schemaParamBounds(
@@ -130,17 +105,12 @@ function deriveEffectParamBounds(): Record<
 /**
  * Allowed numeric parameters per effect class name, with inclusive bounds.
  *
- * Derived from each descriptor's `paramsSchema` when declared, falling back to
- * the legacy table for descriptors that do not (library Anime4K DoG /
- * BilateralMean). Any effect that has no entry here exposes no user-tunable
- * params and must not carry a `params` object on import.
+ * Derived from each descriptor's `paramsSchema`. Effects that declare no schema
+ * expose no user-tunable params and must not carry a `params` object on import.
  */
 export const EFFECT_PARAM_BOUNDS: Readonly<
   Record<string, Readonly<Record<string, EffectParamBound>>>
-> = {
-  ...LEGACY_EFFECT_PARAM_BOUNDS,
-  ...deriveEffectParamBounds(),
-};
+> = deriveEffectParamBounds();
 
 // ===== Color grading metadata =====
 

@@ -4,8 +4,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { installGPUMock, removeGPUMock, createMockGPUTexture } from '@/test/webgpu-mock';
 import type { MockGPUObjects } from '@/test/webgpu-mock';
-import type { EnhancementEffect, DestroyablePipeline, Dimensions } from '@/types';
+import type { BaseMode, EnhancementEffect, DestroyablePipeline, Dimensions, PerformanceTier } from '@/types';
 import { BUILTIN_MODES, getEffectsForMode } from '@utils/settings';
+import { resolveEffectChain } from '@utils/effect-chain-templates';
 import { PipelinePreWarmer } from './pipeline-prewarmer';
 
 // ─── Mock WGSL shader files ───
@@ -47,8 +48,44 @@ const mocks = vi.hoisted(() => {
     };
   }
 
-  const libraryClasses: Record<string, ReturnType<typeof makeEffectClass>> = {
-    ClampHighlights: makeEffectClass('ClampHighlights'),
+  /**
+   * Two-stage epilogue node: its `getOutputTexture()` is a DISTINCT marker
+   * object so tests can prove the apply stage is the new chain tail (rather
+   * than the pass-through stats node's input texture).
+   */
+  function makeApplyClass() {
+    return class MockClampHighlightsApply {
+      static effectName = 'ClampHighlightsApply';
+      descriptor: any;
+      outputTexture: { width: number; height: number; kind: string };
+      constructor(descriptor: any) {
+        this.descriptor = descriptor;
+        this.outputTexture = {
+          width: descriptor.inputTexture?.width ?? 0,
+          height: descriptor.inputTexture?.height ?? 0,
+          kind: 'clamp-apply',
+        };
+        constructed.push({ effectName: 'ClampHighlightsApply', descriptor, paramUpdates: [] });
+      }
+      pass() { return Promise.resolve(); }
+      getOutputTexture() { return this.outputTexture; }
+      updateParam() {}
+      destroy() {}
+    };
+  }
+
+  const ClampHighlightsApplyClass = makeApplyClass();
+
+  // Mirror the shipped two-stage ClampHighlights: the stats node returns the
+  // apply node bound to the chain's final input texture.
+  const ClampHighlightsClass = class extends makeEffectClass('ClampHighlights') {
+    getDeferredPipeline(finalInputTexture: any) {
+      return new ClampHighlightsApplyClass({ inputTexture: finalInputTexture });
+    }
+  };
+
+  const libraryClasses: Record<string, any> = {
+    ClampHighlights: ClampHighlightsClass,
     CNNM: makeEffectClass('CNNM'),
     CNNSoftM: makeEffectClass('CNNSoftM'),
     CNNSoftVL: makeEffectClass('CNNSoftVL'),
@@ -63,6 +100,7 @@ const mocks = vi.hoisted(() => {
     GANx4UUL: makeEffectClass('GANx4UUL'),
     DoG: makeEffectClass('DoG'),
     BilateralMean: makeEffectClass('BilateralMean'),
+    ClampHighlightsApply: ClampHighlightsApplyClass,
     Downscale: makeEffectClass('Downscale'),
   };
 
@@ -71,13 +109,17 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('anime4k-webgpu-async', () => ({ ...mocks.libraryClasses }));
 
-// ─── Mock backend registry (registry path) ───
-// The fake Anime4K backend constructs the SAME hoisted classes the legacy path
-// resolves from the mocked library, so parity is a genuine builder-equivalence
-// assertion. `resolveEffectReference` is real (static descriptors).
-vi.mock('@core/engines/registry.js', () => {
+// ─── Mock backend registry (engine dispatch) ───
+// The fake Anime4K backend constructs the hoisted classes; the core backend is
+// the real `createCoreBackend` (CAS/Debanding/ColorAdjust), so the builder's
+// registry dispatch is exercised for both backends. `resolveEffectReference` is
+// real (static descriptors).
+vi.mock('@core/engines/registry.js', async () => {
+  const { createCoreBackend } = await import('@core/engines/core-backend.js');
+
   // `ref.key` is the descriptor key for every resolved reference, so the fake
-  // backend needs no descriptor table — only the known upscale scale factors.
+  // anime4k backend needs no descriptor table — only the known upscale scale
+  // factors.
   const scaleByKey: Record<string, number> = {
     CNNx2M: 2,
     CNNx2VL: 2,
@@ -89,11 +131,11 @@ vi.mock('@core/engines/registry.js', () => {
 
   const anime4kBackend = {
     backendId: 'anime4k',
-    displayName: 'Anime4K (parity fake)',
+    displayName: 'Anime4K (golden fake)',
     listEffects: () => [],
     async compileEffect(ref: any, ctx: any) {
       const Ctor = mocks.libraryClasses[ref.key];
-      if (!Ctor) throw new Error(`[parity-fake] no constructor for "${ref.key}"`);
+      if (!Ctor) throw new Error(`[golden-fake] no constructor for "${ref.key}"`);
       mocks.backendCompiles += 1;
 
       const pipeline = new Ctor({
@@ -123,12 +165,16 @@ vi.mock('@core/engines/registry.js', () => {
     },
   };
 
+  const coreBackend = createCoreBackend();
+
   const registry = {
     register: vi.fn(),
-    getBackend: (backendId: string) => (backendId === 'anime4k' ? anime4kBackend : undefined),
+    getBackend: (backendId: string) =>
+      backendId === 'anime4k' ? anime4kBackend : backendId === 'core' ? coreBackend : undefined,
     getBackendAsync: async (backendId: string) => {
       if (backendId === 'anime4k') return anime4kBackend;
-      throw new Error(`[parity-fake] backend "${backendId}" is not registered`);
+      if (backendId === 'core') return coreBackend;
+      throw new Error(`[golden-fake] backend "${backendId}" is not registered`);
     },
     listEffects: () => [],
     getDescriptorById: () => undefined,
@@ -214,22 +260,32 @@ describe('buildEffectPipelines', () => {
     onProgress: (stage: string | null, current?: number, total?: number) => void;
     targetDimensions: Dimensions;
     labels: string[];
+    videoWidth: number;
+    videoHeight: number;
+    videoFrameTexture: GPUTexture;
+    preserveDetail: boolean;
+    isBuiltInMode: boolean;
   }> = {}) {
+    const videoWidth = overrides.videoWidth ?? 1920;
+    const videoHeight = overrides.videoHeight ?? 1080;
     const video = {
-      videoWidth: 1920,
-      videoHeight: 1080,
+      videoWidth,
+      videoHeight,
     } as HTMLVideoElement;
 
     return {
       device: mock.device as unknown as GPUDevice,
-      videoFrameTexture: createMockGPUTexture(1920, 1080) as unknown as GPUTexture,
+      videoFrameTexture: overrides.videoFrameTexture
+        ?? createMockGPUTexture(videoWidth, videoHeight) as unknown as GPUTexture,
       video,
-      targetDimensions: { width: 1920, height: 1080 } as Dimensions,
+      targetDimensions: overrides.targetDimensions ?? ({ width: 1920, height: 1080 } as Dimensions),
       effects: overrides.effects ?? [mkEffect('DoG')],
       oldPipelines: overrides.oldPipelines ?? [],
       preWarmer: prewarmer,
       onProgress: overrides.onProgress,
       isStale: overrides.isStale ?? (() => false),
+      preserveDetail: overrides.preserveDetail,
+      isBuiltInMode: overrides.isBuiltInMode,
       labels: overrides.labels,
     };
   }
@@ -404,10 +460,10 @@ describe('buildEffectPipelines', () => {
 
   // ── Upscale factor tracking and Downscale insertion ──
 
-  it('tracks upscale factor and inserts Downscale when needed', async () => {
-    // Two upscale effects: first 2x, second 2x → intermediate size = 3840
-    // targetDimensions = 1080p → idealIntermediateWidth = 1920/1 = 1920
-    // curWidth after first = 3840, which > 1920 * 1.1 → Downscale inserted
+  it('retains the first upscaler and inserts a final Downscale for an equal target', async () => {
+    // Two 2x effects with target == source (1920x1080): the first upscaler is
+    // retained (→3840x2160), the second suppressed, and a single Downscale to
+    // exactly the target is emitted right after the first.
     const params = buildParams({
       targetDimensions: { width: 1920, height: 1080 },
       effects: [
@@ -418,8 +474,8 @@ describe('buildEffectPipelines', () => {
 
     const pipelines = await buildEffectPipelines(params);
 
-    // Should have: CNNx2M → Downscale → CNNx2M = 3 pipelines
-    expect(pipelines.length).toBe(3);
+    // Should have: CNNx2M → Downscale = 2 pipelines
+    expect(pipelines.length).toBe(2);
   });
 
   // ── Labels out-parameter ──
@@ -437,8 +493,188 @@ describe('buildEffectPipelines', () => {
 
     const pipelines = await buildEffectPipelines(params);
 
-    expect(pipelines.length).toBe(3);
-    expect(labels).toEqual(['CNNx2M', 'Downscale', 'CNNx2M']);
+    expect(pipelines.length).toBe(2);
+    expect(labels).toEqual(['CNNx2M', 'Downscale']);
+  });
+
+  // ── Restore suppression policy (V2 preserve detail / V1 full enhancement / custom off) ──
+
+  it('built-in mode with preserveDetail: true emits the V2 chain (trailing restores dropped)', async () => {
+    const labels: string[] = [];
+    const params = buildParams({
+      effects: resolveEffectChain('A+A', 'ultra'),
+      labels,
+      preserveDetail: true,
+    });
+
+    await buildEffectPipelines(params);
+
+    // The two CNNULs after the emitted Downscale are dropped; ClampHighlights
+    // (helper, not restore) and the head restore are kept.
+    expect(labels).toEqual([
+      'ClampHighlights',
+      'CNNUL',
+      'CNNx2UL',
+      'Downscale',
+      'ClampHighlightsApply',
+    ]);
+  });
+
+  it('built-in mode with preserveDetail: false emits the full V1 chain (every restore)', async () => {
+    const labels: string[] = [];
+    const params = buildParams({
+      effects: resolveEffectChain('A+A', 'ultra'),
+      labels,
+      preserveDetail: false,
+    });
+
+    await buildEffectPipelines(params);
+
+    // Turning "Preserve fine detail" off restores the original full-enhancement
+    // chain: both trailing CNNUL restores run after the Downscale.
+    expect(labels).toEqual([
+      'ClampHighlights',
+      'CNNUL',
+      'CNNx2UL',
+      'Downscale',
+      'CNNUL',
+      'CNNUL',
+      'ClampHighlightsApply',
+    ]);
+  });
+
+  it('preserveDetail:false reproduces the full V1 chain across representative built-in modes/tiers', async () => {
+    // V1 ('off') is the original pre-restore-suppression chain: only the later
+    // upscalers are suppressed and every restore is retained. A built-in mode
+    // with preserveDetail:false must match the chain emitted for the same custom
+    // chain (isBuiltInMode:false), which has always used the full policy.
+    const cases: Array<[BaseMode, PerformanceTier]> = [
+      ['A', 'ultra'],
+      ['B', 'balanced'],
+      ['C+A', 'quality'],
+      ['A+A', 'ultra'],
+    ];
+
+    for (const [mode, tier] of cases) {
+      const effects = resolveEffectChain(mode, tier);
+      const v1Labels: string[] = [];
+      await buildEffectPipelines(buildParams({ effects, labels: v1Labels, preserveDetail: false }));
+      const customLabels: string[] = [];
+      await buildEffectPipelines(buildParams({ effects, labels: customLabels, isBuiltInMode: false }));
+      expect(v1Labels, `${mode}/${tier}`).toEqual(customLabels);
+    }
+  });
+
+  it('custom chains keep every restore (suppression off)', async () => {
+    const labels: string[] = [];
+    const params = buildParams({
+      effects: resolveEffectChain('A+A', 'ultra'),
+      labels,
+      isBuiltInMode: false,
+    });
+
+    await buildEffectPipelines(params);
+
+    // User-authored chains are never mutated: both trailing restores survive.
+    expect(labels).toEqual([
+      'ClampHighlights',
+      'CNNUL',
+      'CNNx2UL',
+      'Downscale',
+      'CNNUL',
+      'CNNUL',
+      'ClampHighlightsApply',
+    ]);
+  });
+
+  it('A+A / ultra @2K emits V2 with preserveDetail true and the full V1 chain with false', async () => {
+    const build = async (preserveDetail: boolean) => {
+      const labels: string[] = [];
+      await buildEffectPipelines(buildParams({
+        targetDimensions: { width: 2560, height: 1440 },
+        effects: resolveEffectChain('A+A', 'ultra'),
+        labels,
+        preserveDetail,
+      }));
+      return labels;
+    };
+
+    // V2: the trailing restores after the target-exact Downscale are skipped.
+    expect(await build(true)).toEqual([
+      'ClampHighlights',
+      'CNNUL',
+      'CNNx2UL',
+      'Downscale',
+      'ClampHighlightsApply',
+    ]);
+    // V1 ("Preserve fine detail" off): every restore is retained.
+    expect(await build(false)).toEqual([
+      'ClampHighlights',
+      'CNNUL',
+      'CNNx2UL',
+      'Downscale',
+      'CNNUL',
+      'CNNUL',
+      'ClampHighlightsApply',
+    ]);
+  });
+
+  it('A+A / ultra @4K is identical for preserveDetail true/false (no final Downscale -> no-op)', async () => {
+    // The upscale-target branch triggers with finalDownscale=null, so there is no
+    // target-exact Downscale for the V2 restore rule to suppress after. V2 and V1
+    // are therefore byte-identical here, matching the pre-change goldens.
+    const build = async (preserveDetail: boolean) => {
+      const labels: string[] = [];
+      await buildEffectPipelines(buildParams({
+        targetDimensions: { width: 3840, height: 2160 },
+        effects: resolveEffectChain('A+A', 'ultra'),
+        labels,
+        preserveDetail,
+      }));
+      return labels;
+    };
+
+    const v1 = await build(false);
+    const v2 = await build(true);
+    expect(v2).toEqual(v1);
+    expect(v2).toEqual([
+      'ClampHighlights',
+      'CNNUL',
+      'CNNx2UL',
+      'CNNUL',
+      'CNNUL',
+      'ClampHighlightsApply',
+    ]);
+  });
+
+  it('preserveDetail at 4K is a no-op on a non-triggering chain (A/ultra)', async () => {
+    // A/ultra @4K = [ClampHighlights, CNNUL, CNNx2UL, CNNx2UL] never triggers the
+    // safe-geometry pre-pass (no suppressFromIndex and no final Downscale), so the
+    // V2 trailing restore window does not exist and "Preserve fine detail" must
+    // produce the exact same chain. This pins the no-op as intentional.
+    const build = async (preserveDetail: boolean) => {
+      const labels: string[] = [];
+      await buildEffectPipelines(buildParams({
+        targetDimensions: { width: 3840, height: 2160 },
+        effects: resolveEffectChain('A', 'ultra'),
+        labels,
+        preserveDetail,
+      }));
+      return labels;
+    };
+
+    const v1 = await build(false);
+    const v2 = await build(true);
+
+    expect(v2).toEqual(v1);
+    expect(v2).toEqual([
+      'ClampHighlights',
+      'CNNUL',
+      'CNNx2UL',
+      'Downscale',
+      'CNNx2UL',
+      'ClampHighlightsApply',
+    ]);
   });
 
   it('records classNames for a mixed custom + library chain', async () => {
@@ -457,6 +693,172 @@ describe('buildEffectPipelines', () => {
     expect(labels).toEqual(['CAS', 'CNNM', 'Debanding']);
   });
 
+  // ── Safe-geometry suppression (intermediate-downscale fix) ──
+
+  it('suppresses the later upscaler, downscales to target, then appends the ClampHighlights apply stage (C+A / ultra @2K)', async () => {
+    // C+A / ultra = [ClampHighlights, DenoiseCNNx2VL(2x), CNNUL, CNNx2UL(2x)].
+    // The legacy rule would go 3840x2160 -> Downscale 1280x720 -> 2560x1440
+    // (below the 1080p source). The fix skips CNNx2UL and downscales once; the
+    // V2 default then also drops the trailing CNNUL restore, and the deferred
+    // ClampHighlights apply stage runs last.
+    const labels: string[] = [];
+    const params = buildParams({
+      targetDimensions: { width: 2560, height: 1440 },
+      effects: resolveEffectChain('C+A', 'ultra'),
+      labels,
+    });
+
+    const pipelines = await buildEffectPipelines(params);
+
+    expect(labels).toEqual([
+      'ClampHighlights',
+      'DenoiseCNNx2VL',
+      'Downscale',
+      'ClampHighlightsApply',
+    ]);
+    expect(pipelines.length).toBe(4);
+    expect(labels.length).toBe(pipelines.length);
+    // Apply stage is the chain tail (distinct marker output).
+    expect((pipelines[pipelines.length - 1].getOutputTexture() as any).kind).toBe('clamp-apply');
+  });
+
+  it('orders the apply stage after the final Downscale for both upscale and equal targets (C+A / ultra)', async () => {
+    for (const targetDimensions of [
+      { width: 2560, height: 1440 }, // upscale-target branch
+      { width: 1920, height: 1080 }, // shrinking/equal-target branch
+    ]) {
+      const labels: string[] = [];
+      const params = buildParams({
+        targetDimensions,
+        effects: resolveEffectChain('C+A', 'ultra'),
+        labels,
+      });
+
+      const pipelines = await buildEffectPipelines(params);
+
+      // Stats stage first and a pass-through of its input.
+      expect(labels[0]).toBe('ClampHighlights');
+      expect(pipelines[0].getOutputTexture()).toBe(params.videoFrameTexture);
+
+      // Apply stage last, after the Downscale.
+      expect(labels[labels.length - 1]).toBe('ClampHighlightsApply');
+      expect(labels).toContain('Downscale');
+      expect(labels.indexOf('Downscale')).toBeLessThan(labels.length - 1);
+      expect((pipelines[pipelines.length - 1].getOutputTexture() as any).kind).toBe('clamp-apply');
+      expect(labels.length).toBe(pipelines.length);
+    }
+  });
+
+  it('suppresses the over-limit 8K upscaler and appends the target Downscale (adapter ceiling)', async () => {
+    const labels: string[] = [];
+    const params = buildParams({
+      videoWidth: 7680,
+      videoHeight: 4320,
+      targetDimensions: { width: 3840, height: 2160 },
+      effects: [mkEffect('CNNx2M', undefined, 2)],
+      labels,
+    });
+
+    const pipelines = await buildEffectPipelines(params);
+
+    // 2x on 8K would emit a 15360-wide intermediate; the guard suppresses the
+    // effect and downscales the 8K source to the 4K target from its slot.
+    expect(labels).toEqual(['Downscale']);
+    expect(pipelines.length).toBe(1);
+  });
+
+  it('keeps a trailing restore when the limit guard emits no final Downscale (8K->8K)', async () => {
+    const labels: string[] = [];
+    const params = buildParams({
+      videoWidth: 7680,
+      videoHeight: 4320,
+      targetDimensions: { width: 7680, height: 4320 },
+      // The 2x would emit a 15360-wide intermediate and is suppressed; the
+      // pre-upscale 8K already equals the target, so no Downscale is emitted and
+      // the trailing CNNM restore must survive (it used to be dropped because the
+      // limit preview anchored `finalDownscaleAfterIndex` at the suppressed slot).
+      effects: [mkEffect('CNNx2M', undefined, 2), mkEffect('CNNM')],
+      labels,
+    });
+
+    await buildEffectPipelines(params);
+
+    expect(labels).toEqual(['CNNM']);
+  });
+
+  it('keeps a 4K source + 2x upscaler (8K intermediate is within the default budget)', async () => {
+    const labels: string[] = [];
+    const params = buildParams({
+      videoWidth: 3840,
+      videoHeight: 2160,
+      targetDimensions: { width: 7680, height: 4320 },
+      effects: [mkEffect('CNNx2M', undefined, 2)],
+      labels,
+    });
+
+    const pipelines = await buildEffectPipelines(params);
+
+    expect(labels).toEqual(['CNNx2M']);
+    expect(pipelines.length).toBe(1);
+  });
+
+  it('threads device.limits.maxTextureDimension2D into the geometry guard', async () => {
+    const buildNarrow = async () => {
+      const labels: string[] = [];
+      const params = buildParams({
+        videoWidth: 4096,
+        videoHeight: 1024,
+        targetDimensions: { width: 4096, height: 720 },
+        effects: [mkEffect('CNNx2M', undefined, 2)],
+        labels,
+      });
+      return { pipelines: await buildEffectPipelines(params), labels };
+    };
+
+    // 4096-wide source * 2x = 8192-wide intermediate: over a 4096 adapter
+    // ceiling. The upscaler is suppressed and the pre-upscale 4K is downscaled
+    // to the 720p render target from its slot.
+    mock.device.limits.maxTextureDimension2D = 4096;
+    const narrow = await buildNarrow();
+    expect(narrow.labels).toEqual(['Downscale']);
+    expect(narrow.pipelines.length).toBe(1);
+
+    // Within the default test adapter ceiling (8192): retained + downscaled.
+    mock.device.limits.maxTextureDimension2D = 8192;
+    const wide = await buildNarrow();
+    expect(wide.labels).toEqual(['CNNx2M', 'Downscale']);
+    expect(wide.pipelines.length).toBe(2);
+  });
+
+  it('keeps the legacy intermediate Downscale for a sub-720p target (floor)', async () => {
+    // A 540p target is below MIN_DOWNSCALE_HEIGHT, so the legacy per-step rule
+    // is preserved unchanged (including its 480x270 intermediate).
+    const labels: string[] = [];
+    const params = buildParams({
+      targetDimensions: { width: 960, height: 540 },
+      effects: [
+        mkEffect('ClampHighlights'),
+        mkEffect('DenoiseCNNx2VL', undefined, 2),
+        mkEffect('CNNUL'),
+        mkEffect('CNNx2UL', undefined, 2),
+      ],
+      labels,
+    });
+
+    const pipelines = await buildEffectPipelines(params);
+
+    expect(labels).toEqual([
+      'ClampHighlights',
+      'DenoiseCNNx2VL',
+      'Downscale',
+      'CNNUL',
+      'CNNx2UL',
+      'ClampHighlightsApply',
+    ]);
+    expect(pipelines.length).toBe(6);
+    expect(labels.length).toBe(pipelines.length);
+  });
+
   it("records 'passthrough' for the empty dummy pipeline", async () => {
     const labels: string[] = [];
     const params = buildParams({ effects: [], labels });
@@ -467,7 +869,7 @@ describe('buildEffectPipelines', () => {
     expect(labels).toEqual(['passthrough']);
   });
 
-  // ── Effect not found yields dummy pipeline ──
+  // ── Unresolvable effects are skipped (warn, no pipeline) ──
 
   it('returns dummy pipeline when no valid pipelines were created', async () => {
     // When effects produce no valid pipelines (e.g., all effects fail class lookup),
@@ -483,6 +885,45 @@ describe('buildEffectPipelines', () => {
 
     // isStale() returned true → empty array, not dummy pipeline
     expect(pipelines).toEqual([]);
+  });
+
+  it('skips an unknown effect (warns, no pipeline) and keeps the passthrough', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const labels: string[] = [];
+      const params = buildParams({ effects: [mkEffect('NonExistent')], labels });
+
+      const pipelines = await buildEffectPipelines(params);
+
+      // The unresolved effect is skipped, never constructed, so the builder
+      // falls back to the passthrough dummy.
+      expect(pipelines.length).toBe(1);
+      expect(labels).toEqual(['passthrough']);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('Unknown legacy'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('skips an unresolved new-style effect (warns, no pipeline)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const labels: string[] = [];
+      const params = buildParams({
+        effects: [
+          { id: 'bogus/Bar', name: 'Bar', className: 'Bar', backendId: 'bogus', key: 'Bar' },
+        ],
+        labels,
+      });
+
+      const pipelines = await buildEffectPipelines(params);
+
+      expect(pipelines.length).toBe(1);
+      expect(labels).toEqual(['passthrough']);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('Unresolved new-style'));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   // ── Effect params applied ──
@@ -529,7 +970,7 @@ describe('buildEffectPipelines', () => {
   });
 });
 
-// ─── Golden parity: legacy vs registry ───
+// ─── Golden: engine registry dispatch ───
 
 /** Comparable projection of one constructed pipeline descriptor. */
 function normalizeStep(record: { effectName: string; descriptor: any }) {
@@ -544,9 +985,9 @@ function normalizeStep(record: { effectName: string; descriptor: any }) {
   };
 }
 
-describe('buildEffectPipelines golden parity (legacy vs registry)', () => {
+describe('buildEffectPipelines golden (engine registry)', () => {
   let mock: MockGPUObjects;
-  // A no-op pre-warmer isolates Phase 1 construction so the parity snapshot only
+  // A no-op pre-warmer isolates Phase 1 construction so the snapshot only
   // contains the real effect steps and intermediate Downscales.
   const noopPreWarmer = {
     warm: vi.fn().mockResolvedValue(undefined),
@@ -565,7 +1006,6 @@ describe('buildEffectPipelines golden parity (legacy vs registry)', () => {
   function buildParams(
     effects: EnhancementEffect[],
     labels: string[],
-    backendMode: 'legacy' | 'registry',
   ) {
     const video = { videoWidth: 1920, videoHeight: 1080 } as HTMLVideoElement;
     return {
@@ -578,15 +1018,14 @@ describe('buildEffectPipelines golden parity (legacy vs registry)', () => {
       preWarmer: noopPreWarmer,
       isStale: () => false,
       labels,
-      backendMode,
     };
   }
 
-  async function run(effects: EnhancementEffect[], backendMode: 'legacy' | 'registry') {
+  async function run(effects: EnhancementEffect[]) {
     mocks.constructed.length = 0;
     mocks.backendCompiles = 0;
     const labels: string[] = [];
-    const pipelines = await buildEffectPipelines(buildParams(effects, labels, backendMode));
+    const pipelines = await buildEffectPipelines(buildParams(effects, labels));
     return {
       pipelineCount: pipelines.length,
       labels: [...labels],
@@ -621,7 +1060,7 @@ describe('buildEffectPipelines golden parity (legacy vs registry)', () => {
         params: { strength: 0.35, strength2: 3 },
       },
     ]],
-    ['upscale + params + intermediate Downscale', [
+    ['upscale + params + final Downscale', [
       { id: 'anime4k/Helper/ClampHighlights', name: 'Clamp Highlights', className: 'ClampHighlights' },
       { id: 'anime4k/Deblur/DoG', name: 'Deblur (DoG)', className: 'DoG', params: { strength: 7 } },
       { id: 'anime4k/Upscale/CNNx2M', name: 'Upscale CNN x2 (M)', className: 'CNNx2M', upscaleFactor: 2 },
@@ -630,18 +1069,55 @@ describe('buildEffectPipelines golden parity (legacy vs registry)', () => {
   ];
 
   for (const [name, effects] of [...builtInCases, ...extraCases]) {
-    it(`is identical for ${name}`, async () => {
-      const legacy = await run(effects, 'legacy');
-      const registry = await run(effects, 'registry');
+    it(`records the registry sequence for ${name}`, async () => {
+      const registry = await run(effects);
 
-      // Registry mode must actually compile through the backend for every
-      // effect; a silent legacy fallback would make this comparison vacuous.
-      expect(legacy.backendCompiles).toBe(0);
-      expect(registry.backendCompiles).toBe(effects.length);
+      // The engine registry must compile every retained effect through its
+      // backend. The Downscale and the deferred apply node are constructed
+      // directly, not through a backend.
+      const effectCount = registry.classSequence
+        .filter((constructed) => constructed !== 'Downscale' && constructed !== 'ClampHighlightsApply')
+        .length;
+      expect(registry.backendCompiles).toBe(effectCount);
 
-      const { backendCompiles: _legacyCompiles, ...legacySnapshot } = legacy;
-      const { backendCompiles: _registryCompiles, ...registrySnapshot } = registry;
-      expect(registrySnapshot).toEqual(legacySnapshot);
+      const { backendCompiles: _compiles, ...snapshot } = registry;
+      expect(snapshot).toMatchSnapshot();
     });
   }
+
+  it('suppresses the over-limit 8K upscaler and appends the target Downscale', async () => {
+    const effects: EnhancementEffect[] = [
+      { id: 'anime4k/Upscale/CNNx2M', name: 'Upscale CNN x2 (M)', className: 'CNNx2M', upscaleFactor: 2 },
+    ];
+
+    mocks.constructed.length = 0;
+    mocks.backendCompiles = 0;
+    const labels: string[] = [];
+    const video = { videoWidth: 7680, videoHeight: 4320 } as HTMLVideoElement;
+    const pipelines = await buildEffectPipelines({
+      device: mock.device as unknown as GPUDevice,
+      videoFrameTexture: createMockGPUTexture(7680, 4320) as unknown as GPUTexture,
+      video,
+      targetDimensions: { width: 3840, height: 2160 } as Dimensions,
+      effects,
+      oldPipelines: [] as DestroyablePipeline[],
+      preWarmer: noopPreWarmer,
+      isStale: () => false,
+      labels,
+    });
+
+    // The effect is suppressed, so it is never compiled through the backend; the
+    // chain emits only the target Downscale from the pre-upscale 8K texture.
+    expect({
+      pipelineCount: pipelines.length,
+      labels: [...labels],
+      classSequence: mocks.constructed.map((record) => record.effectName),
+      backendCompiles: mocks.backendCompiles,
+    }).toEqual({
+      pipelineCount: 1,
+      labels: ['Downscale'],
+      classSequence: ['Downscale'],
+      backendCompiles: 0,
+    });
+  });
 });

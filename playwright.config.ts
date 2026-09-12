@@ -18,6 +18,11 @@ const isCI = Boolean(process.env.CI);
 export default defineConfig({
   testDir: './e2e',
 
+  // The WebGPU correctness gate lives in e2e/gpu and is run separately via
+  // `pnpm test:gpu` (playwright.gpu.config.ts). Excluding it here keeps this
+  // suite GPU-free, as its header and .github/workflows/e2e.yml promise.
+  testIgnore: '**/gpu/**',
+
   // Extensions share one persistent profile per test; never parallelise them.
   fullyParallel: false,
   workers: 1,

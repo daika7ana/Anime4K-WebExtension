@@ -366,12 +366,33 @@ describe('normalizeLocalSettings', () => {
       gpuBenchmarkResult: { tier: 'nope' },
       hasCompletedOnboarding: 'no',
       showDiagnostics: 1,
+      preserveDetail: 'yes',
     });
 
     expect(result.performanceTier).toBe('balanced');
     expect(result.gpuBenchmarkResult).toBeNull();
     expect(result.hasCompletedOnboarding).toBe(false);
     expect(result.showDiagnostics).toBe(false);
+    // A corrupt value falls back to the default, which is ON (V2).
+    expect(result.preserveDetail).toBe(true);
+  });
+
+  it('defaults preserveDetail to true when absent', () => {
+    const result = normalizeLocalSettings({});
+    expect(result.preserveDetail).toBe(true);
+  });
+
+  it('preserves a valid preserveDetail boolean', () => {
+    expect(normalizeLocalSettings({ preserveDetail: true }).preserveDetail).toBe(true);
+    expect(normalizeLocalSettings({ preserveDetail: false }).preserveDetail).toBe(false);
+  });
+
+  it('ignores a stale legacy maxDetail key (no migration; defaults to true)', () => {
+    // The renamed setting must not read the old key: an absent `preserveDetail`
+    // normalizes to the default `true` even when `maxDetail` is present.
+    const result = normalizeLocalSettings({ maxDetail: false });
+    expect(result.preserveDetail).toBe(true);
+    expect('maxDetail' in result).toBe(false);
   });
 
   it('preserves valid values', () => {
@@ -386,12 +407,14 @@ describe('normalizeLocalSettings', () => {
       },
       hasCompletedOnboarding: true,
       showDiagnostics: true,
+      preserveDetail: false,
     });
 
     expect(result.performanceTier).toBe('quality');
     expect(result.gpuBenchmarkResult?.tier).toBe('quality');
     expect(result.hasCompletedOnboarding).toBe(true);
     expect(result.showDiagnostics).toBe(true);
+    expect(result.preserveDetail).toBe(false);
   });
 });
 

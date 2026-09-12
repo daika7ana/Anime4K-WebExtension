@@ -179,6 +179,8 @@ describe('Renderer', () => {
       onFrameRendered: overrides.onFrameRendered as RendererOptions['onFrameRendered'],
       onProgress: overrides.onProgress as ((stage: string | null, current?: number, total?: number) => void) | undefined,
       enableGpuTimings: overrides.enableGpuTimings as boolean | undefined,
+      preserveDetail: overrides.preserveDetail as boolean | undefined,
+      isBuiltInMode: overrides.isBuiltInMode as boolean | undefined,
     });
     await Promise.resolve();
     return r;
@@ -417,6 +419,34 @@ describe('Renderer', () => {
       r.destroy();
     });
 
+    it('preserveDetail policy change alone → rebuild', async () => {
+      // Effects and dimensions are unchanged, so only the restore-suppression
+      // policy differs; the toggle must still rebuild or it would be a no-op.
+      mockParamsEqual.mockReturnValue(true);
+      const r = await createRenderer({ preserveDetail: false });
+      mockBuildEffectPipelines.mockClear();
+      await r.updateConfiguration({
+        effects: DEFAULT_EFFECTS,
+        targetDimensions: DEFAULT_DIMENSIONS,
+        preserveDetail: true,
+      });
+      expect(mockBuildEffectPipelines).toHaveBeenCalled();
+      r.destroy();
+    });
+
+    it('unchanged preserveDetail policy → no rebuild', async () => {
+      mockParamsEqual.mockReturnValue(true);
+      const r = await createRenderer({ preserveDetail: true });
+      mockBuildEffectPipelines.mockClear();
+      await r.updateConfiguration({
+        effects: DEFAULT_EFFECTS,
+        targetDimensions: DEFAULT_DIMENSIONS,
+        preserveDetail: true,
+      });
+      expect(mockBuildEffectPipelines).not.toHaveBeenCalled();
+      r.destroy();
+    });
+
     it('does nothing when destroyed', async () => {
       const r = await createRenderer();
       r.destroy();
@@ -486,6 +516,32 @@ describe('Renderer', () => {
       const frameTime = onFrameRendered.mock.calls[0][0];
       expect(typeof frameTime).toBe('number');
       expect(frameTime).toBeGreaterThanOrEqual(0);
+
+      r.destroy();
+    });
+
+    it('passes the number of built pipelines (excluding the blit) as the third argument', async () => {
+      const onFrameRendered = vi.fn();
+      // Simulate a chain that builds N effect pipelines (one label each). The
+      // final blit is timed separately and must not be represented here.
+      mockBuildEffectPipelines.mockImplementation(async (params: { labels?: string[] }) => {
+        params.labels?.push('ClampHighlights', 'DenoiseCNNx2VL', 'Downscale', 'CNNUL', 'ClampHighlightsApply');
+        return [
+          createMockPipeline(),
+          createMockPipeline(),
+          createMockPipeline(),
+          createMockPipeline(),
+          createMockPipeline(),
+        ];
+      });
+
+      const r = await createRenderer({ onFrameRendered });
+
+      // Drain the fire-and-forget first-frame render (one await per pipeline).
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      expect(onFrameRendered).toHaveBeenCalledTimes(1);
+      expect(onFrameRendered.mock.calls[0][2]).toBe(5);
 
       r.destroy();
     });

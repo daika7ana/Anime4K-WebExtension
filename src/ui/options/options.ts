@@ -38,6 +38,7 @@ const runBenchmarkBtn = document.getElementById('run-benchmark-btn') as HTMLButt
 const tierSelect = document.getElementById('tier-select') as HTMLSelectElement;
 const enableHotkeyToggle = document.getElementById('enable-hotkey-toggle') as HTMLInputElement;
 const diagnosticsToggle = document.getElementById('diagnostics-toggle') as HTMLInputElement;
+const preserveDetailToggle = document.getElementById('preserve-detail-toggle') as HTMLInputElement;
 
 // --- AppContext: shared state + callbacks for all panels ---
 const ctx: AppContext = {
@@ -96,6 +97,7 @@ const generalPanel = initGeneralPanel(
   versionNumberSpan,
   enableHotkeyToggle,
   diagnosticsToggle,
+  preserveDetailToggle,
 );
 
 // --- Cross-context message listener ---

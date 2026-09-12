@@ -287,9 +287,9 @@ describe('EFFECT_PARAM_BOUNDS', () => {
     });
   });
 
-  it('keeps exact legacy bounds for descriptors without a paramsSchema', () => {
-    // The library Anime4K DoG / BilateralMean descriptors declare no schema, so
-    // validation must fall back to the hardcoded table and keep rejecting.
+  it('derives exact schema-backed bounds for the library DoG / BilateralMean effects', () => {
+    // The extension overlays paramsSchema onto the library descriptors, so
+    // validation derives these bounds from the same metadata as the sliders.
     expect(EFFECT_PARAM_BOUNDS.DoG).toEqual({
       strength: { min: 1, max: 10, defaultValue: 4 },
     });

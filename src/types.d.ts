@@ -1,7 +1,6 @@
 // ===== Anime4K Library Types =====
 import type { Anime4KPipeline } from 'anime4k-webgpu-async';
 import type { ProfilerSnapshot } from './core/gpu/gpu-timestamp-profiler';
-import type { EngineRegistryMode } from './core/engines/flag';
 
 // ===== CSS Module Declarations =====
 declare module "*.css";
@@ -48,11 +47,6 @@ interface CustomMode {
 // Unified enhancement mode type
 type EnhancementMode = BuiltInMode | CustomMode;
 
-// ===== Effect Class Name (for param-slider registry) =====
-// Class names of effects that expose a user-tunable param.
-// Kept in sync with PARAM_REGISTRY keys — TypeScript will flag any drift.
-type EffectClassName = 'CAS' | 'DoG' | 'BilateralMean' | 'Debanding';
-
 // ===== Param Slider Configuration (for options UI) =====
 interface ParamSliderConfig {
   paramKey: string;       // e.g. 'sharpness', 'strength'
@@ -79,12 +73,6 @@ interface EffectClassDescriptor {
 interface DestroyablePipeline extends Anime4KPipeline {
   destroy?(): void;
 }
-
-/** Constructor signature for Anime4K library effect classes. */
-type Anime4KClassCtor = new (descriptor: EffectClassDescriptor) => DestroyablePipeline;
-
-/** The anime4k-webgpu-async module viewed as a className -> constructor map. */
-type Anime4KClassMap = Record<string, Anime4KClassCtor>;
 
 /** Shape of pipeline objects traversed by safeDestroy -- expose destroy + optional children. */
 interface DisposablePipeline {
@@ -115,16 +103,6 @@ declare global {
   interface Scheduler {
     yield(): Promise<void>;
   }
-}
-
-// ===== Custom Effect Descriptor (for renderer custom-effect registry) =====
-interface CustomEffectDescriptor {
-  EffectClass: new (descriptor: EffectClassDescriptor) => DestroyablePipeline;
-  getDescriptor: (
-    device: GPUDevice,
-    inputTexture: GPUTexture,
-    params?: Record<string, number>,
-  ) => EffectClassDescriptor;
 }
 
 // ===== GPU Benchmark Result Interface =====
@@ -167,6 +145,13 @@ interface LocalSettings {
 
   hasCompletedOnboarding: boolean;
   showDiagnostics: boolean;
+  /**
+   * "Preserve fine detail" — for built-in modes, keep the V2 restore policy:
+   * skip the scale-1 restore passes emitted after the target-exact final
+   * Downscale. `false` restores the full-enhancement V1 chain (every restore
+   * retained). Persisted locally; defaults to `true` (V2).
+   */
+  preserveDetail?: boolean;
 }
 
 // ===== Runtime-merged Full Settings =====
@@ -217,9 +202,11 @@ interface RendererOptions {
   onFirstFrameRendered?: () => void;
   /**
    * Callback invoked after each successfully rendered frame with the frame time
-   * in ms and, when GPU timings are enabled, the latest profiler snapshot.
+   * in ms, when GPU timings are enabled the latest profiler snapshot, and the
+   * number of GPU pipeline stages that were built/executed for the frame
+   * (excluding the final blit).
    */
-  onFrameRendered?: (frameTime: number, profiler?: ProfilerSnapshot | null) => void;
+  onFrameRendered?: (frameTime: number, profiler?: ProfilerSnapshot | null, pipelineCount?: number) => void;
   /** Initialization progress callback function */
   onProgress?: (stage: string | null, current?: number, total?: number) => void;
   /**
@@ -228,11 +215,16 @@ interface RendererOptions {
    */
   enableGpuTimings?: boolean;
   /**
-   * Effect-compilation path. Omitted/`'legacy'` keeps the legacy per-className
-   * dispatch; `'registry'` compiles through the engine backend seam. Temporary
-   * rollout flag (see `src/core/engines/flag.ts`).
+   * Local "Preserve fine detail" preference. For built-in modes only, keeps the
+   * V2 restore policy (`'trailing'`); `false` falls back to the full-enhancement
+   * V1 chain (`'off'`). Defaults to `true`.
    */
-  backendMode?: EngineRegistryMode;
+  preserveDetail?: boolean;
+  /**
+   * Whether the active effect chain is a built-in mode. Defaults to `true`;
+   * custom (user-authored) chains pass `false` so they are never mutated.
+   */
+  isBuiltInMode?: boolean;
 }
 
 // Export interfaces for use by other modules
@@ -250,13 +242,9 @@ export {
   BuiltInMode,
   CustomMode,
   GPUBenchmarkResult,
-  EffectClassName,
   ParamSliderConfig,
-  CustomEffectDescriptor,
   EffectClassDescriptor,
   DestroyablePipeline,
-  Anime4KClassCtor,
-  Anime4KClassMap,
   DisposablePipeline,
   GPUAdapterInfo,
   GPUAdapterWithInfo,

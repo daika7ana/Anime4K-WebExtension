@@ -12,8 +12,8 @@
  *
  * The pre-warmer is engine-agnostic: it never imports the Anime4K library or
  * resolves `className` → class itself. The caller (the pipeline builder) supplies
- * a `compileDummy` callback that knows how to compile one effect (legacy class map
- * or engine backend). The dummy pipelines are destroyed immediately after
+ * a `compileDummy` callback that knows how to compile one effect through its
+ * engine backend. The dummy pipelines are destroyed immediately after
  * construction — the compiled shaders remain cached in the driver.
  */
 

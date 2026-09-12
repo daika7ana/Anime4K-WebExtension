@@ -51,7 +51,6 @@ const LAZY_IMPORT_FILES = [
   'src/core/gpu/pipeline-builder.ts',
   'src/core/gpu/pipeline-prewarmer.ts',
   'src/core/gpu/gpu-benchmark.ts',
-  'src/core/engines/flag.ts',
 ];
 
 /**

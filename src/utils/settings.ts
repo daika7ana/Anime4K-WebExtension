@@ -68,6 +68,9 @@ const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
   gpuBenchmarkResult: null,
   hasCompletedOnboarding: false,
   showDiagnostics: false,
+  // V2 (skip target-resolution restore passes) is the default; a missing key
+  // normalizes to `true`, so no migration is needed.
+  preserveDetail: true,
 };
 
 /**
@@ -214,6 +217,13 @@ export function normalizeLocalSettings(data: Record<string, unknown>): LocalSett
       data.showDiagnostics,
       DEFAULT_LOCAL_SETTINGS.showDiagnostics,
     ),
+    // A stale legacy `maxDetail` key is deliberately not read (ignored/dropped);
+    // a missing `preserveDetail` normalizes to the default `true`.
+    preserveDetail: coerceBoolean(
+      'preserveDetail',
+      data.preserveDetail,
+      DEFAULT_LOCAL_SETTINGS.preserveDetail ?? true,
+    ),
   };
 }
 
@@ -249,6 +259,7 @@ export async function getLocalSettings(): Promise<LocalSettings> {
       'gpuAdapterInfo',
       'hasCompletedOnboarding',
       'showDiagnostics',
+      'preserveDetail',
     ], (data) => {
       resolve(normalizeLocalSettings(data));
     });
@@ -350,6 +361,7 @@ export async function saveSettings(settings: Partial<Anime4KWebExtSettings>): Pr
     'gpuBenchmarkResult',
     'hasCompletedOnboarding',
     'showDiagnostics',
+    'preserveDetail',
   ];
 
   const syncSettings: Partial<Record<keyof SyncedSettings, unknown>> = {};

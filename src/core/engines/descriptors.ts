@@ -15,6 +15,12 @@
  * here (metadata only) so this module has no runtime dependency on the GPU
  * pipeline builder; `./core-backend` imports {@link coreEffectDescriptors}
  * from here.
+ *
+ * The library catalog declares no `paramsSchema` for DoG / BilateralMean, so
+ * their schemas are supplied extension-side (see
+ * {@link ANIME4K_PARAM_SCHEMA_OVERLAY}) rather than duplicated in the slider
+ * and validation tables. Sliders and validation bounds are both derived from
+ * these schemas.
  */
 import type { EffectDescriptor, EffectParamSchema } from 'anime4k-webgpu-async';
 import { anime4kEffectDescriptors } from 'anime4k-webgpu-async/engines/anime4k/catalog';
@@ -26,18 +32,28 @@ function numberParam(
   max: number,
   step: number,
   defaultValue: number,
+  labelKey?: string,
+  labelFallback?: string,
 ): EffectParamSchema {
-  return { type: 'number', min, max, step, defaultValue };
+  return {
+    type: 'number',
+    min,
+    max,
+    step,
+    defaultValue,
+    ...(labelKey !== undefined ? { labelKey } : {}),
+    ...(labelFallback !== undefined ? { labelFallback } : {}),
+  };
 }
 
 /**
  * Catalog of the extension-owned effects (backend `core`).
  *
- * `paramsSchema` mirrors the slider bounds/defaults in
- * `src/ui/options/param-sliders.ts` and the validation bounds in
- * `src/utils/validation.ts` (`EFFECT_PARAM_BOUNDS` / `COLOR_GRADING_BOUNDS`).
- * Defined here (metadata only) so the persistence/validation path never pulls
- * the GPU pipeline builder; `./core-backend` imports this for compilation.
+ * `paramsSchema` is the single source of truth for slider bounds/defaults
+ * (`src/ui/options/param-sliders.ts`) and validation bounds
+ * (`src/utils/validation.ts`, `EFFECT_PARAM_BOUNDS`). Defined here (metadata
+ * only) so the persistence/validation path never pulls the GPU pipeline
+ * builder; `./core-backend` imports this for compilation.
  */
 export const coreEffectDescriptors: readonly EffectDescriptor[] = [
   {
@@ -48,7 +64,7 @@ export const coreEffectDescriptors: readonly EffectDescriptor[] = [
     category: 'sharpen',
     dimensionBehavior: SAME,
     paramsSchema: {
-      sharpness: numberParam(0, 1, 0.01, 0.5),
+      sharpness: numberParam(0, 1, 0.01, 0.5, 'sharpness', 'Sharpness'),
     },
   },
   {
@@ -59,8 +75,8 @@ export const coreEffectDescriptors: readonly EffectDescriptor[] = [
     category: 'deband',
     dimensionBehavior: SAME,
     paramsSchema: {
-      strength: numberParam(0, 1, 0.01, 0.5),
-      bandThreshold: numberParam(0, 1, 0.01, 0.08),
+      strength: numberParam(0, 1, 0.01, 0.5, 'debandingStrength', 'Debanding'),
+      bandThreshold: numberParam(0, 1, 0.01, 0.08, 'debandingThreshold', 'Threshold'),
     },
   },
   {
@@ -83,11 +99,33 @@ export const coreEffectDescriptors: readonly EffectDescriptor[] = [
 ];
 
 /**
+ * Extension-side `paramsSchema` overlay for library Anime4K descriptors whose
+ * catalog entries declare none. Keyed by descriptor id; the overlay is merged
+ * onto the imported descriptor (only for ids present here) so sliders and
+ * validation bounds stay descriptor-driven.
+ */
+const ANIME4K_PARAM_SCHEMA_OVERLAY: Readonly<
+  Record<string, Readonly<Record<string, EffectParamSchema>>>
+> = {
+  'anime4k/Deblur/DoG': {
+    strength: numberParam(1, 10, 0.1, 4, 'strength', 'Strength'),
+  },
+  'anime4k/Denoise/BilateralMean': {
+    strength: numberParam(0, 1, 0.01, 0.2, 'intensitySigma', 'Intensity σ'),
+    strength2: numberParam(0.5, 5, 0.1, 2, 'spatialSigma', 'Spatial σ'),
+  },
+};
+
+/**
  * All static descriptors known to the seam, in backend-registration order:
- * the 15 library Anime4K effects (from the catalog-only subpath) followed by
- * the 3 extension core effects. (18 total, of which ColorAdjust is hidden.)
+ * the 15 library Anime4K effects (from the catalog-only subpath, with the
+ * DoG / BilateralMean schemas overlaid above) followed by the 3 extension core
+ * effects. (18 total, of which ColorAdjust is hidden.)
  */
 export const extensionEffectDescriptors: readonly EffectDescriptor[] = [
-  ...anime4kEffectDescriptors,
+  ...anime4kEffectDescriptors.map((descriptor) => {
+    const overlay = ANIME4K_PARAM_SCHEMA_OVERLAY[descriptor.id];
+    return overlay ? { ...descriptor, paramsSchema: overlay } : descriptor;
+  }),
   ...coreEffectDescriptors,
 ];

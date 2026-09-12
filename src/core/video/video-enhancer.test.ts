@@ -730,7 +730,7 @@ describe('VideoEnhancer', () => {
       expect(mockDiagnosticsOverlay.destroy).toHaveBeenCalled();
     });
 
-    it('onFrameRendered callback forwards the profiler snapshot to the diagnostics overlay', async () => {
+    it('onFrameRendered callback forwards the profiler snapshot and renderer-supplied pipeline count to the diagnostics overlay', async () => {
       (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
         showDiagnostics: true,
       });
@@ -742,7 +742,8 @@ describe('VideoEnhancer', () => {
       const createCall = (Renderer.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
       expect(createCall.onFrameRendered).toBeDefined();
 
-      // Simulate a frame render with a profiler snapshot
+      // Simulate a frame render with a profiler snapshot and the count reported
+      // by the renderer (e.g. 5 built GPU stages, blit excluded).
       const snapshot = {
         status: 'active' as const,
         framesSampled: 1,
@@ -750,6 +751,29 @@ describe('VideoEnhancer', () => {
         totalGpuP95: 2.5,
         passes: [{ label: 'ClampHighlights', gpuP50: 1.5 }],
       };
+      createCall.onFrameRendered!(12.5, snapshot, 5);
+
+      expect(mockDiagnosticsOverlay.update).toHaveBeenCalledWith(12.5, 5, snapshot);
+      enhancer.destroy();
+    });
+
+    it('onFrameRendered callback falls back to the selected-effect count when the renderer count is omitted', async () => {
+      (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        showDiagnostics: true,
+      });
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      const createCall = (Renderer.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const snapshot = {
+        status: 'active' as const,
+        framesSampled: 1,
+        totalGpuP50: 1.5,
+        totalGpuP95: 2.5,
+        passes: [{ label: 'ClampHighlights', gpuP50: 1.5 }],
+      };
+      // The mocked mode selects a single effect, so the fallback count is 1.
       createCall.onFrameRendered!(12.5, snapshot);
 
       expect(mockDiagnosticsOverlay.update).toHaveBeenCalledWith(12.5, 1, snapshot);
@@ -1013,6 +1037,97 @@ describe('VideoEnhancer', () => {
 
         enhancer.destroy();
       });
+    });
+  });
+
+  describe('preserveDetail / isBuiltInMode threading', () => {
+    /**
+     * A built-in mode (isBuiltIn=true) paired with preserveDetail=false gives
+     * distinct values, so a swapped or dropped argument is caught. The custom
+     * mode case below covers the isBuiltIn=false path.
+     */
+    const BUILT_IN_MODE_SETTINGS = {
+      selectedModeId: 'builtin-mode-a',
+      enhancementModes: [
+        { id: 'builtin-mode-a', baseMode: 'A' as const, name: 'Mode A', isBuiltIn: true as const },
+      ],
+      targetResolutionSetting: 'x2',
+      performanceTier: 'balanced' as const,
+      enableCrossOriginFix: false,
+    };
+
+    it('forwards preserveDetail=false and isBuiltInMode=true to Renderer.create', async () => {
+      (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        showDiagnostics: false,
+        preserveDetail: false,
+      });
+      (getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...BUILT_IN_MODE_SETTINGS });
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      const createCall = (Renderer.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(createCall.preserveDetail).toBe(false);
+      expect(createCall.isBuiltInMode).toBe(true);
+      enhancer.destroy();
+    });
+
+    it('forwards preserveDetail=false and isBuiltInMode=true to updateConfiguration', async () => {
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        showDiagnostics: false,
+        preserveDetail: false,
+      });
+
+      await enhancer.updateSettings({
+        ...BUILT_IN_MODE_SETTINGS,
+        customModes: [],
+        whitelist: [],
+        whitelistEnabled: false,
+        autoEnableOnWhitelist: false,
+        enableHotkey: true,
+        colorGrading: {
+          enabled: false,
+          brightness: 0,
+          gamma: 1,
+          contrast: 1,
+          saturation: 1,
+          vibrance: 0,
+          exposure: 0,
+        },
+      } as any);
+
+      const updateCall = (mockRenderer.updateConfiguration as ReturnType<typeof vi.fn>).mock.calls.at(-1)!;
+      expect(updateCall[0].preserveDetail).toBe(false);
+      expect(updateCall[0].isBuiltInMode).toBe(true);
+      enhancer.destroy();
+    });
+
+    it('forwards the custom-mode flag (isBuiltInMode=false) to Renderer.create', async () => {
+      (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        showDiagnostics: false,
+        preserveDetail: true,
+      });
+      (getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        selectedModeId: 'custom-mode',
+        enhancementModes: [
+          { id: 'custom-mode', baseMode: 'A' as const, name: 'Custom Mode', isBuiltIn: false as const },
+        ],
+        targetResolutionSetting: 'x2',
+        performanceTier: 'balanced' as const,
+        enableCrossOriginFix: false,
+      });
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      const createCall = (Renderer.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      // Distinct values (default preserveDetail=true) so a swap is caught.
+      expect(createCall.preserveDetail).toBe(true);
+      expect(createCall.isBuiltInMode).toBe(false);
+      enhancer.destroy();
     });
   });
 

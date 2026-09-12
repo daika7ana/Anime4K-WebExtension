@@ -27,6 +27,12 @@ export interface MockGPUAdapter {
 export interface MockGPUDevice {
   /** Device-enabled optional features. Mutable so tests can toggle e.g. 'timestamp-query'. */
   features: Set<string>;
+  /** Adapter/device limits exposed to geometry planners (e.g. maxTextureDimension2D). */
+  limits: {
+    maxTextureDimension2D: number;
+    maxBufferSize: number;
+    maxStorageBufferBindingSize: number;
+  };
   createTexture: ReturnType<typeof vi.fn>;
   createBuffer: ReturnType<typeof vi.fn>;
   createShaderModule: ReturnType<typeof vi.fn>;
@@ -271,6 +277,11 @@ function buildMockObjects(options: InternalMockOptions): {
   // ── Mock GPUDevice ──
   const mockDevice: MockGPUDevice = {
     features: new Set<string>(options.deviceFeatures),
+    limits: {
+      maxTextureDimension2D: 8192,
+      maxBufferSize: 268435456,
+      maxStorageBufferBindingSize: 134217728,
+    },
     createTexture: vi.fn((descriptor?: Record<string, unknown>) => {
       const { width, height } = parseTextureSize(descriptor?.size);
       return {

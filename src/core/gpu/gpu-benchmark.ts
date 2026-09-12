@@ -3,14 +3,13 @@
  * Tests using real Anime4K effects
  */
 
-import type { PerformanceTier, GPUBenchmarkResult, EnhancementEffect, BenchmarkProgress, DestroyablePipeline, Anime4KClassMap, GPUAdapterWithInfo } from '@/types';
+import type { PerformanceTier, GPUBenchmarkResult, EnhancementEffect, BenchmarkProgress, DestroyablePipeline, GPUAdapterWithInfo, Dimensions } from '@/types';
 import type { BackendRegistry } from 'anime4k-webgpu-async';
 import { resolveEffectChain } from '@utils/effect-chain-templates';
 import { resolveEffectReference, type EffectResolution } from '@utils/effect-registry';
-import { getEngineRegistryMode, type EngineRegistryMode } from '@core/engines/flag';
 import { gpuResourceCache } from '@core/gpu/gpu-resource-cache';
 import { TexturePool } from './texture-pool';
-import { computeRemainingUpscaleFactors, planIntermediateDownscale } from './effect-chain';
+import { compileEffectChain } from './effect-chain-compiler';
 
 // Test configuration
 const TEST_TIMEOUT_MS = 20000; // Individual test timeout
@@ -274,9 +273,6 @@ export async function runGPUBenchmark(
     console.log('[GPUBenchmark] Loading anime4k-webgpu-async module...');
     const Anime4K = await import('anime4k-webgpu-async');
 
-    // Temporary rollout flag: compile through the engine registry when enabled.
-    const backendMode = await getEngineRegistryMode();
-
     console.log('[GPUBenchmark] Starting benchmark...');
 
     // Global warmup phase: run multiple frames with performance effect chain to warm up GPU
@@ -292,7 +288,7 @@ export async function runGPUBenchmark(
         await device.queue.onSubmittedWorkDone();
 
         const warmupEffects = resolveEffectChain('A+A', 'performance');
-        await runEffectChainTest(device, warmupTexture, warmupEffects, Anime4K, backendMode);
+        await runEffectChainTest(device, warmupTexture, warmupEffects, Anime4K);
         texturePool.release(warmupTexture);
         console.log('[GPUBenchmark] Global warmup complete');
     }
@@ -340,7 +336,7 @@ export async function runGPUBenchmark(
 
             // Run the test
             const { avgTime, maxTime, samples } = await runWithTimeout(
-                runEffectChainTest(device, inputTexture, effects, Anime4K, backendMode),
+                runEffectChainTest(device, inputTexture, effects, Anime4K),
                 TEST_TIMEOUT_MS
             );
 
@@ -438,151 +434,95 @@ export async function runEffectChainTest(
     inputTexture: GPUTexture,
     effects: EnhancementEffect[],
     Anime4K: typeof import('anime4k-webgpu-async'),
-    backendMode: EngineRegistryMode = 'legacy',
+    /** Source/input dimensions. Defaults to the benchmark's 1080p test input. */
+    sourceDimensions: Dimensions = { width: TEST_WIDTH, height: TEST_HEIGHT },
 ): Promise<{ avgTime: number; maxTime: number; samples: number[] }> {
-    // Build pipelines
-    const pipelines: DestroyablePipeline[] = [];
-    let currentTexture: GPUTexture = inputTexture;
-    let curWidth = TEST_WIDTH;
-    let curHeight = TEST_HEIGHT;
-
+    // Build pipelines through the shared effect-chain compiler (lockstep with
+    // the renderer's pipeline builder). The benchmark's device, warmup, batching
+    // and discard-window policy below are untouched.
     // Get Downscale class dynamically
-    const DownscaleClass = (Anime4K as unknown as Anime4KClassMap).Downscale;
+    const DownscaleClass = Anime4K.Downscale;
 
     const targetDimensions = { width: TARGET_WIDTH, height: TARGET_HEIGHT };
-    const useRegistry = backendMode === 'registry';
-    const resolutions: EffectResolution[] | null = useRegistry
-        ? effects.map((effect) => resolveEffectReference(effect))
-        : null;
+    const resolutions: EffectResolution[] = effects.map((effect) =>
+        resolveEffectReference(effect),
+    );
 
-    if (useRegistry && !cachedBenchmarkRegistry) {
+    if (!cachedBenchmarkRegistry) {
         // Explicit `.js` specifier (TS node16 dynamic-import resolution); webpack's
         // extensionAlias maps it to the `.ts`. Must stay dynamic so the library
         // is not inlined into the benchmark's module graph.
         const { getBackendRegistry } = await import('@core/engines/registry.js');
         cachedBenchmarkRegistry = getBackendRegistry();
     }
-    const registry = useRegistry ? cachedBenchmarkRegistry : null;
+    const registry = cachedBenchmarkRegistry;
 
     const upscaleFactors = effects.map((effect, i) => {
-        const resolution = resolutions?.[i];
-        if (resolution?.status === 'resolved') {
+        const resolution = resolutions[i];
+        if (resolution.status === 'resolved') {
             return resolution.effect.descriptor.dimensionBehavior.scale ?? 1;
         }
         return effect.upscaleFactor ?? 1;
     });
-    // Pre-calculate remaining upscale factors
-    const remainingUpscaleFactors = computeRemainingUpscaleFactors(
-        upscaleFactors.map((upscaleFactor) => ({ upscaleFactor })),
+
+    // Mirror the renderer's default restore policy (V2) so benchmark geometry
+    // matches what the pipeline builder emits. The role flags come from the
+    // resolved descriptor category (helpers are never restores).
+    const restoreFlags = resolutions.map(
+        (resolution) =>
+            resolution.status === 'resolved'
+            && resolution.effect.descriptor.category === 'restore',
     );
 
-    interface BenchStep {
-        pipeline: DestroyablePipeline;
-        scaleApplied: boolean;
-        postWidth: number;
-        postHeight: number;
-    }
-
-    /** Legacy class-map construction; also the registry per-effect fallback. */
-    const buildLegacyStep = (effect: EnhancementEffect): BenchStep | null => {
-        const EffectClass = (Anime4K as unknown as Anime4KClassMap)[effect.className];
-        if (!EffectClass) {
-            console.warn(`[GPUBenchmark] Effect class not found: ${effect.className}`);
-            return null;
-        }
-
-        const pipeline = new EffectClass({
-            device,
-            inputTexture: currentTexture,
-            nativeDimensions: { width: curWidth, height: curHeight },
-            targetDimensions,
-        });
-        const upscaleFactor = effect.upscaleFactor ?? 1;
-        return {
-            pipeline,
-            scaleApplied: upscaleFactor > 1,
-            postWidth: upscaleFactor > 1 ? curWidth * upscaleFactor : curWidth,
-            postHeight: upscaleFactor > 1 ? curHeight * upscaleFactor : curHeight,
-        };
-    };
-
-    for (let i = 0; i < effects.length; i++) {
-        const effect = effects[i];
-        try {
-            let step: BenchStep | null;
-
-            if (useRegistry && registry && resolutions) {
-                const resolution = resolutions[i];
+    const result = await compileEffectChain({
+        device,
+        inputTexture,
+        sourceDimensions,
+        targetDimensions,
+        effects,
+        upscaleFactors,
+        downscaleCtor: DownscaleClass,
+        restoreFlags,
+        restoreSuppression: 'trailing',
+        compileEffect: async ({ effect, index, inputTexture: stepInput, currentDimensions }) => {
+            try {
+                const resolution = resolutions[index];
                 if (resolution.status === 'resolved') {
                     const { descriptor, reference } = resolution.effect;
                     try {
                         const backend = await registry.getBackendAsync(descriptor.backendId);
                         const node = await backend.compileEffect(reference, {
                             device,
-                            inputTexture: currentTexture,
-                            sourceDimensions: { width: TEST_WIDTH, height: TEST_HEIGHT },
-                            currentDimensions: { width: curWidth, height: curHeight },
+                            inputTexture: stepInput,
+                            sourceDimensions,
+                            currentDimensions,
                             targetDimensions,
                             params: effect.params,
                             resources: gpuResourceCache,
                             isStale: () => false,
                         });
-                        step = {
+                        return {
                             pipeline: node.pipeline,
+                            label: node.profileLabel,
                             scaleApplied: descriptor.dimensionBehavior.kind === 'scale',
-                            postWidth: node.outputDimensions.width,
-                            postHeight: node.outputDimensions.height,
+                            postDimensions: node.outputDimensions,
                         };
                     } catch (e) {
                         console.warn(`[GPUBenchmark] Registry compile failed for ${effect.className}:`, e);
-                        step = buildLegacyStep(effect);
-                    }
-                } else {
-                    step = buildLegacyStep(effect);
-                }
-            } else {
-                step = buildLegacyStep(effect);
-            }
-
-            if (!step) continue;
-
-            pipelines.push(step.pipeline);
-
-            // Update current texture to this pipeline's output
-            currentTexture = step.pipeline.getOutputTexture();
-
-            if (step.scaleApplied) {
-                let postWidth = step.postWidth;
-                let postHeight = step.postHeight;
-
-                // Check if intermediate downscaling is needed (consistent with renderer.ts)
-                if (DownscaleClass) {
-                    const intermediate = planIntermediateDownscale({
-                        curWidth: postWidth,
-                        curHeight: postHeight,
-                        targetDimensions,
-                        remainingFactor: remainingUpscaleFactors[i],
-                    });
-                    if (intermediate) {
-                        const intermediateDownscale = new DownscaleClass({
-                            device,
-                            inputTexture: currentTexture,
-                            targetDimensions: intermediate,
-                        });
-                        pipelines.push(intermediateDownscale);
-                        currentTexture = intermediateDownscale.getOutputTexture();
-                        postWidth = intermediate.width;
-                        postHeight = intermediate.height;
+                        return null;
                     }
                 }
 
-                curWidth = postWidth;
-                curHeight = postHeight;
+                console.warn(`[GPUBenchmark] ${resolution.status === 'unresolved' ? 'Unresolved' : 'Unknown'} effect "${effect.className}"; skipping.`);
+                return null;
+            } catch (e) {
+                console.warn(`[GPUBenchmark] Failed to create ${effect.className}:`, e);
+                return null;
             }
-        } catch (e) {
-            console.warn(`[GPUBenchmark] Failed to create ${effect.className}:`, e);
-        }
-    }
+        },
+    });
+
+    const pipelines = result.pipelines;
 
     if (pipelines.length === 0) {
         throw new Error('No valid pipelines created');

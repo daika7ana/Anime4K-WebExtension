@@ -46,9 +46,10 @@
       <!-- Mode selector -->
       <div class="setting-group">
         <label id="mode-label" for="mode-select" data-i18n="enhancementModeLabel">Enhancement Mode</label>
-        <select id="mode-select" aria-labelledby="mode-label">
+        <select id="mode-select" aria-labelledby="mode-label" aria-describedby="mode-description">
           <!-- Mode options will be dynamically populated by popup.ts -->
         </select>
+        <p id="mode-description" class="mode-description" hidden></p>
       </div>
 
       <!-- Resolution selector -->

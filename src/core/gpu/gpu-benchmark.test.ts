@@ -43,6 +43,55 @@ vi.mock('anime4k-webgpu-async', () => ({
   Downscale: MockLibEffect,
 }));
 
+// ─── Mock backend registry (engine dispatch) ───
+// Since registry dispatch is unconditional, the benchmark's lazy registry load
+// must resolve to a fake Anime4K backend that constructs the mock classes.
+vi.mock('@core/engines/registry.js', () => {
+  const scaleByKey: Record<string, number> = {
+    CNNx2M: 2,
+    CNNx2VL: 2,
+    DenoiseCNNx2VL: 2,
+    CNNx2UL: 2,
+  };
+
+  const anime4kBackend = {
+    backendId: 'anime4k',
+    displayName: 'Anime4K (benchmark-test fake)',
+    listEffects: () => [],
+    async compileEffect(ref: any, ctx: any) {
+      const pipeline = new MockLibEffect({
+        device: ctx.device,
+        inputTexture: ctx.inputTexture,
+        nativeDimensions: ctx.currentDimensions,
+        targetDimensions: ctx.targetDimensions,
+      });
+      const scale = scaleByKey[ref.key] ?? 1;
+      return {
+        pipeline,
+        outputTexture: pipeline.getOutputTexture(),
+        outputDimensions: scale > 1
+          ? {
+            width: ctx.currentDimensions.width * scale,
+            height: ctx.currentDimensions.height * scale,
+          }
+          : ctx.currentDimensions,
+        profileLabel: ref.key,
+      };
+    },
+  };
+
+  const registry = {
+    register: vi.fn(),
+    getBackend: () => anime4kBackend,
+    getBackendAsync: async () => anime4kBackend,
+    listEffects: () => [],
+    getDescriptorById: () => undefined,
+    getDescriptorByBackendKey: () => undefined,
+  };
+
+  return { getBackendRegistry: () => registry };
+});
+
 // ─── Import after mocks ───
 import {
   runGPUBenchmark,

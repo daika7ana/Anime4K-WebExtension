@@ -1,5 +1,4 @@
 import { getSettings, getEffectsForMode, getLocalSettings } from '@utils/settings';
-import { getEngineRegistryMode } from '@core/engines/flag';
 import { sendMessage } from '@utils/messaging';
 import { t } from '@utils/i18n';
 import { Renderer } from '@core/renderer';
@@ -22,6 +21,10 @@ export class VideoEnhancer {
   private overlay: OverlayManager;
   private button: HTMLButtonElement;
   private diagnosticsOverlay: DiagnosticsOverlay | null = null;
+  /**
+   * Fallback pipeline count (selected-effect count) used by the diagnostics
+   * overlay when the renderer does not supply its authoritative staged count.
+   */
   private currentPipelineCount = 0;
 
   /** The resolution setting the renderer is currently configured with. */
@@ -234,14 +237,12 @@ export class VideoEnhancer {
     const baseEffects = getEffectsForMode(selectedMode, settings.performanceTier);
     const effects = this.getEffectsWithColorGrading(baseEffects, settings.colorGrading);
 
-    // Store pipeline count for diagnostics
+    // Store the selected-effect count as a diagnostics fallback.
     this.currentPipelineCount = effects.length;
 
     // Create diagnostics overlay if enabled in local settings
     const localSettings = await getLocalSettings();
     const showDiagnostics = localSettings.showDiagnostics;
-    // Temporary rollout flag: compile through the engine registry when enabled.
-    const engineRegistryMode = await getEngineRegistryMode();
     if (showDiagnostics) {
       const adapterInfo = await this.getAdapterInfo();
       this.diagnosticsOverlay = DiagnosticsOverlay.create(this.video, adapterInfo);
@@ -255,8 +256,12 @@ export class VideoEnhancer {
       targetDimensions,
       // GPU timings are only collected while the diagnostics overlay is shown.
       enableGpuTimings: showDiagnostics,
-      // Only surface a non-default mode so the default options shape is unchanged.
-      ...(engineRegistryMode !== 'legacy' ? { backendMode: engineRegistryMode } : {}),
+      // Restore-suppression policy: built-in modes default to V2 ("trailing",
+      // the "Preserve fine detail" setting), turning it off selects the V1
+      // full-enhancement chain, and custom chains keep `'off'` (the builder maps
+      // these). Reset on the next rebuild.
+      preserveDetail: localSettings.preserveDetail ?? true,
+      isBuiltInMode: selectedMode.isBuiltIn,
       onError: async (error: Error) => {
         console.error('[Anime4KWebExt] Renderer runtime error:', error);
         const isCrossOriginError = error.name === 'SecurityError' && error.message.includes('tainted');
@@ -283,8 +288,10 @@ export class VideoEnhancer {
           this.button.innerText = stage;
         }
       },
-      onFrameRendered: (frameTime, snapshot) => {
-        this.diagnosticsOverlay?.update(frameTime, this.currentPipelineCount, snapshot);
+      onFrameRendered: (frameTime, snapshot, pipelineCount) => {
+        // The renderer reports the number of actually-built GPU stages; fall back
+        // to the selected-effect count when the renderer argument is unavailable.
+        this.diagnosticsOverlay?.update(frameTime, pipelineCount ?? this.currentPipelineCount, snapshot);
       },
     });
 
@@ -330,21 +337,27 @@ export class VideoEnhancer {
     const baseEffects = getEffectsForMode(selectedMode, newSettings.performanceTier);
     const effects = this.getEffectsWithColorGrading(baseEffects, newSettings.colorGrading);
 
+    // Local prefs (Preserve fine detail) are applied at build time; read them
+    // before the configuration update so a policy change is detected and the
+    // chain rebuilds.
+    const localSettings = await getLocalSettings();
+
     // Call the renderer's unified configuration update method, which intelligently handles changes
     await this.renderer.updateConfiguration({
       effects: effects,
-      targetDimensions: newTargetDimensions
+      targetDimensions: newTargetDimensions,
+      preserveDetail: localSettings.preserveDetail ?? true,
+      isBuiltInMode: selectedMode.isBuiltIn,
     });
 
     this.currentModeId = selectedMode.id;
     this.updateDisplayResizeListeners(targetResolutionSetting);
     console.log(`[Anime4KWebExt] Renderer updated to mode: ${selectedMode.name}`);
 
-    // Update pipeline count for diagnostics
+    // Update the diagnostics fallback count
     this.currentPipelineCount = effects.length;
 
-    // Handle diagnostics overlay toggle
-    const localSettings = await getLocalSettings();
+    // Handle diagnostics overlay toggle (localSettings read above)
     if (localSettings.showDiagnostics && !this.diagnosticsOverlay) {
       const adapterInfo = await this.getAdapterInfo();
       this.diagnosticsOverlay = DiagnosticsOverlay.create(this.video, adapterInfo);

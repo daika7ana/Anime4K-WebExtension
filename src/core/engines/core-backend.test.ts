@@ -45,6 +45,8 @@ describe('coreEffectDescriptors', () => {
       max: 1,
       step: 0.01,
       defaultValue: 0.5,
+      labelKey: 'sharpness',
+      labelFallback: 'Sharpness',
     });
   });
 
@@ -58,6 +60,8 @@ describe('coreEffectDescriptors', () => {
       max: 1,
       step: 0.01,
       defaultValue: 0.5,
+      labelKey: 'debandingStrength',
+      labelFallback: 'Debanding',
     });
     expect(descriptor.paramsSchema?.bandThreshold).toEqual({
       type: 'number',
@@ -65,6 +69,8 @@ describe('coreEffectDescriptors', () => {
       max: 1,
       step: 0.01,
       defaultValue: 0.08,
+      labelKey: 'debandingThreshold',
+      labelFallback: 'Threshold',
     });
   });
 
@@ -163,6 +169,57 @@ describe('createCoreBackend().compileEffect', () => {
     expect(node.profileLabel).toBe('ColorAdjust');
     expect(node.pipeline.getOutputTexture()).toBe(node.outputTexture);
     expect(node.outputDimensions).toEqual(ctx.currentDimensions);
+    // vec4<f32>: brightness, gamma, contrast, vibrance.
+    const primary = gpu.device.queue.writeBuffer.mock.calls[0]?.[2] as Float32Array;
+    expect(primary[0]).toBeCloseTo(0.25, 5);
+    expect(primary[1]).toBeCloseTo(1.2, 5);
+    expect(primary[2]).toBeCloseTo(1, 5);
+    expect(primary[3]).toBeCloseTo(0, 5);
+    // vec2<f32>: saturation, exposure default when not supplied.
+    const secondary = gpu.device.queue.writeBuffer.mock.calls[1]?.[2] as Float32Array;
+    expect(secondary[0]).toBeCloseTo(1, 5);
+    expect(secondary[1]).toBeCloseTo(0, 5);
+  });
+
+  it('applies CAS descriptor defaults when params are absent', async () => {
+    const backend = createCoreBackend();
+    const node = await backend.compileEffect(
+      { id: 'anime4k/Sharpen/CAS', backendId: 'core', key: 'CAS' },
+      makeContext(),
+    );
+
+    expect(node.profileLabel).toBe('CAS');
+    const written = gpu.device.queue.writeBuffer.mock.calls[0]?.[2] as Float32Array;
+    expect(written[0]).toBeCloseTo(0.5, 5);
+  });
+
+  it('applies Debanding descriptor defaults when params are absent', async () => {
+    const backend = createCoreBackend();
+    const node = await backend.compileEffect(
+      { id: 'anime4k/Debanding/Debanding', backendId: 'core', key: 'Debanding' },
+      makeContext(),
+    );
+
+    expect(node.profileLabel).toBe('Debanding');
+    const written = gpu.device.queue.writeBuffer.mock.calls[0]?.[2] as Float32Array;
+    expect(written[0]).toBeCloseTo(0.5, 5);
+    expect(written[1]).toBeCloseTo(0.08, 5);
+  });
+
+  it('applies ColorAdjust descriptor defaults when params are absent', async () => {
+    const backend = createCoreBackend();
+    const node = await backend.compileEffect(
+      { id: 'anime4k/ColorGrading/ColorAdjust', backendId: 'core', key: 'ColorAdjust' },
+      makeContext(),
+    );
+
+    expect(node.profileLabel).toBe('ColorAdjust');
+    // vec4<f32>: brightness, gamma, contrast, vibrance.
+    const primary = gpu.device.queue.writeBuffer.mock.calls[0]?.[2] as Float32Array;
+    expect(Array.from(primary)).toEqual([0, 1, 1, 0]);
+    // vec2<f32>: saturation, exposure.
+    const secondary = gpu.device.queue.writeBuffer.mock.calls[1]?.[2] as Float32Array;
+    expect(Array.from(secondary)).toEqual([1, 0]);
   });
 
   it('throws a clear error for an unknown key', async () => {

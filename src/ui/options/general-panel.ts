@@ -20,6 +20,7 @@ export function initGeneralPanel(
   versionNumberSpan: HTMLSpanElement,
   enableHotkeyToggle: HTMLInputElement,
   diagnosticsToggle: HTMLInputElement,
+  preserveDetailToggle: HTMLInputElement,
 ): { render(): Promise<void>; renderGeneralSettings(): Promise<void> } {
 
   async function render() {
@@ -28,9 +29,10 @@ export function initGeneralPanel(
     themeSelect.value = themeManager.getTheme();
     tierSelect.value = ctx.getTier();
 
-    // Diagnostics toggle reads from local settings
+    // Diagnostics + Preserve fine detail toggles read from local settings
     const localSettings = await getLocalSettings();
     diagnosticsToggle.checked = localSettings.showDiagnostics ?? false;
+    preserveDetailToggle.checked = localSettings.preserveDetail ?? true;
 
     // Hotkey toggle reads from synced settings
     enableHotkeyToggle.checked = state.enableHotkey ?? true;
@@ -120,6 +122,13 @@ export function initGeneralPanel(
   diagnosticsToggle.addEventListener('change', async (e) => {
     const enabled = (e.target as HTMLInputElement).checked;
     await saveLocalSettings({ showDiagnostics: enabled });
+    ctx.notifyUpdate();
+  });
+
+  // --- Preserve Fine Detail Toggle (local; V2 restore suppression) ---
+  preserveDetailToggle.addEventListener('change', async (e) => {
+    const enabled = (e.target as HTMLInputElement).checked;
+    await saveLocalSettings({ preserveDetail: enabled });
     ctx.notifyUpdate();
   });
 

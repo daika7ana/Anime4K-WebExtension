@@ -77,6 +77,13 @@ describe('renderParamSliders', () => {
       expect(effect.params!.bandThreshold).toBeCloseTo(0.08, 5);
     });
 
+    it('formats both values with two decimals', () => {
+      const { values } = render(makeEffect('Debanding', { strength: 0.5, bandThreshold: 0.08 }));
+
+      expect(values[0].textContent).toBe('0.50');
+      expect(values[1].textContent).toBe('0.08');
+    });
+
     it('converts a bandThreshold slider change back to the [0,1] param', async () => {
       const { sliders, effect, saveCallback } = render(
         makeEffect('Debanding', { strength: 0.5, bandThreshold: 0.08 }),
@@ -88,6 +95,39 @@ describe('renderParamSliders', () => {
 
       expect(effect.params!.bandThreshold).toBeCloseTo(0.3, 5);
       expect(effect.params!.strength).toBe(0.5);
+      expect(saveCallback).toHaveBeenCalledWith('mode-1');
+    });
+  });
+
+  describe('BilateralMean sliders', () => {
+    it('renders strength (percent, 2-decimal) and strength2 (scaled, 1-decimal)', () => {
+      const { sliders, values, effect } = render(makeEffect('BilateralMean', {}));
+
+      expect(sliders).toHaveLength(2);
+      // strength 0.2 → 0–100 percent slider, two-decimal display.
+      expect(sliders[0].min).toBe('0');
+      expect(sliders[0].max).toBe('100');
+      expect(sliders[0].value).toBe('20');
+      expect(values[0].textContent).toBe('0.20');
+      // strength2 2 → 5–50 scaled slider, one-decimal display.
+      expect(sliders[1].min).toBe('5');
+      expect(sliders[1].max).toBe('50');
+      expect(sliders[1].value).toBe('20');
+      expect(values[1].textContent).toBe('2.0');
+      expect(effect.params!.strength).toBe(0.2);
+      expect(effect.params!.strength2).toBe(2);
+    });
+
+    it('converts a strength slider change back to the [0,1] param', async () => {
+      const { sliders, effect, saveCallback } = render(
+        makeEffect('BilateralMean', { strength: 0.2, strength2: 2 }),
+      );
+
+      sliders[0].value = '55';
+      sliders[0].dispatchEvent(new Event('change'));
+      await Promise.resolve();
+
+      expect(effect.params!.strength).toBeCloseTo(0.55, 5);
       expect(saveCallback).toHaveBeenCalledWith('mode-1');
     });
   });
@@ -110,7 +150,7 @@ describe('renderParamSliders', () => {
   });
 
   describe('guards', () => {
-    it('renders nothing for an effect class without a registered slider', () => {
+    it('renders nothing for an effect whose descriptor declares no paramsSchema (ClampHighlights)', () => {
       const { sliders } = render(makeEffect('ClampHighlights', { foo: 1 }));
       expect(sliders).toHaveLength(0);
     });

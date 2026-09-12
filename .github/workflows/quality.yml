@@ -56,3 +56,6 @@ jobs:
 
       - name: Verify WGSL compilation
         run: pnpm run verify:wgsl
+
+      - name: Verify GPU effect correctness
+        run: pnpm test:gpu
