@@ -202,6 +202,19 @@
               </label>
             </div>
           </div>
+          <div class="setting-item">
+            <div class="setting-label">
+              <label for="diagnostics-detail-select" data-i18n="diagnosticsDetail">Detail level</label>
+              <p class="setting-description" data-i18n="diagnosticsDetailDesc">Choose how much detail the diagnostics overlay shows.</p>
+            </div>
+            <div class="setting-control">
+              <select id="diagnostics-detail-select">
+                <option value="auto" data-i18n="diagnosticsDetailAuto">Auto (compact on small videos)</option>
+                <option value="compact" data-i18n="diagnosticsDetailCompact">Compact</option>
+                <option value="expanded" data-i18n="diagnosticsDetailExpanded">Expanded</option>
+              </select>
+            </div>
+          </div>
         </div>
 
         <div class="card">
@@ -244,12 +257,12 @@
             </div>
           </div>
 
-          <!-- Preserve fine detail (local): skip target-resolution restore passes -->
+          <!-- Fast mode — Preserve detail (local): skips target-resolution restore passes -->
           <div class="setting-item">
             <div class="setting-label">
-              <label for="preserve-detail-toggle">Preserve fine detail</label>
-              <p class="setting-description">
-                Skip target-resolution restore passes that soften fine detail. Turn off for maximum enhancement.
+              <label for="preserve-detail-toggle" data-i18n="preserveDetailLabel">Fast mode — Preserve detail</label>
+              <p class="setting-description" data-i18n="preserveDetailDesc">
+                Skips the trailing target-resolution restore passes for a large speedup. Applies to all modes, including custom ones. Off is not always higher quality — on many videos these passes change little, and some clips look as good or better without them.
               </p>
             </div>
             <div class="setting-control">
@@ -311,6 +324,18 @@
           </div>
         </div>
         <div class="card">
+          <div class="setting-item">
+            <div class="setting-label">
+              <label for="whitelist-enabled-toggle" data-i18n="whitelistEnable">Enable Whitelist Mode</label>
+              <p class="setting-description" data-i18n="whitelistEnableDesc">When enabled, only sites and pages on the whitelist are enhanced.</p>
+            </div>
+            <div class="setting-control">
+              <label class="switch">
+                <input type="checkbox" id="whitelist-enabled-toggle">
+                <span class="slider round"></span>
+              </label>
+            </div>
+          </div>
           <div class="setting-item">
             <div class="setting-label">
               <label for="auto-enable-toggle" data-i18n="autoEnableOnWhitelist">Auto-enable on Whitelisted Sites</label>

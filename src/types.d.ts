@@ -139,6 +139,14 @@ interface SyncedSettings {
   colorGrading: ColorGradingSettings;
 }
 
+/**
+ * How much detail the on-video diagnostics HUD renders.
+ * - `auto`     — expanded, but compact automatically on small video rects;
+ * - `compact`  — minimal always-on HUD (FPS / frame budget / GPU share);
+ * - `expanded` — full metric block plus the per-pass GPU timing table.
+ */
+type DiagnosticsDetailMode = 'auto' | 'compact' | 'expanded';
+
 // ===== Local-only Settings (storage.local) =====
 interface LocalSettings {
   performanceTier: PerformanceTier;
@@ -146,11 +154,13 @@ interface LocalSettings {
 
   hasCompletedOnboarding: boolean;
   showDiagnostics: boolean;
+  /** Diagnostics HUD detail level; defaults to `'auto'`. */
+  diagnosticsDetail?: DiagnosticsDetailMode;
   /**
-   * "Preserve fine detail" — for built-in modes, keep the V2 restore policy:
-   * skip the scale-1 restore passes emitted after the target-exact final
-   * Downscale. `false` restores the full-enhancement V1 chain (every restore
-   * retained). Persisted locally; defaults to `true` (V2).
+   * "Fast mode — Preserve detail" — applies to all modes, built-in and custom:
+   * keep the V2 restore policy, i.e. skip the scale-1 restore passes emitted
+   * after the target-exact final Downscale. `false` restores the full-enhancement
+   * V1 chain (every restore retained). Persisted locally; defaults to `true` (V2).
    */
   preserveDetail?: boolean;
 }
@@ -216,16 +226,11 @@ interface RendererOptions {
    */
   enableGpuTimings?: boolean;
   /**
-   * Local "Preserve fine detail" preference. For built-in modes only, keeps the
-   * V2 restore policy (`'trailing'`); `false` falls back to the full-enhancement
-   * V1 chain (`'off'`). Defaults to `true`.
+   * Local "Fast mode" preference. Applies to all modes: keeps the
+   * V2 restore policy (`'trailing'`) when `true`; `false` falls back to the
+   * full-enhancement V1 chain (`'off'`). Defaults to `true`.
    */
   preserveDetail?: boolean;
-  /**
-   * Whether the active effect chain is a built-in mode. Defaults to `true`;
-   * custom (user-authored) chains pass `false` so they are never mutated.
-   */
-  isBuiltInMode?: boolean;
 }
 
 // Export interfaces for use by other modules
@@ -235,6 +240,7 @@ export {
   Anime4KWebExtSettings,
   SyncedSettings,
   LocalSettings,
+  DiagnosticsDetailMode,
   ColorGradingSettings,
   Dimensions,
   WhitelistRule,

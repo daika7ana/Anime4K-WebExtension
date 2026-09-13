@@ -29,10 +29,8 @@ export class Renderer {
   private onProgress?: (stage: string | null, current?: number, total?: number) => void;
   /** Whether GPU timestamp profiling should be enabled for this renderer */
   private enableGpuTimings = false;
-  /** Local "Preserve fine detail" preference; built-in modes only (V2 when true). */
+  /** Local "Fast mode — Preserve detail" preference (V2 restore policy when true). */
   private preserveDetail = true;
-  /** Whether the active effect chain is a built-in mode (vs user-authored). */
-  private isBuiltInMode = true;
 
   // --- State flags ---
   private destroyed = false;
@@ -102,7 +100,6 @@ export class Renderer {
     this.onProgress = options.onProgress;
     this.enableGpuTimings = options.enableGpuTimings ?? false;
     this.preserveDetail = options.preserveDetail ?? true;
-    this.isBuiltInMode = options.isBuiltInMode ?? true;
   }
 
   /**
@@ -288,7 +285,6 @@ export class Renderer {
         onProgress: this.onProgress,
         isStale: () => this.buildGeneration !== generation,
         preserveDetail: this.preserveDetail,
-        isBuiltInMode: this.isBuiltInMode,
         labels, // Out-param filled with one label per built pipeline, in encode order
       });
       if (this.buildGeneration !== generation) return; // Superseded
@@ -691,7 +687,7 @@ export class Renderer {
    * Uses shallow params comparison instead of JSON.stringify.
    * @param options Object containing new effects and target dimensions
    */
-  public async updateConfiguration(options: { effects: EnhancementEffect[], targetDimensions: Dimensions, preserveDetail?: boolean, isBuiltInMode?: boolean }): Promise<void> {
+  public async updateConfiguration(options: { effects: EnhancementEffect[], targetDimensions: Dimensions, preserveDetail?: boolean }): Promise<void> {
     if (this.destroyed) return;
 
     const { effects, targetDimensions } = options;
@@ -704,11 +700,10 @@ export class Renderer {
       );
     const dimensionsChanged = this.targetDimensions.width !== targetDimensions.width || this.targetDimensions.height !== targetDimensions.height;
     // Restore-suppression policy changes do not alter the effect list, so they
-    // must be detected explicitly or toggling "Preserve fine detail" would be a
+    // must be detected explicitly or toggling "Fast mode" would be a
     // no-op.
     const nextPreserveDetail = options.preserveDetail ?? this.preserveDetail;
-    const nextIsBuiltInMode = options.isBuiltInMode ?? this.isBuiltInMode;
-    const policyChanged = nextPreserveDetail !== this.preserveDetail || nextIsBuiltInMode !== this.isBuiltInMode;
+    const policyChanged = nextPreserveDetail !== this.preserveDetail;
 
     if (!effectsChanged && !dimensionsChanged && !policyChanged) {
       console.log('[Anime4KWebExt] Configuration unchanged, skipping pipeline rebuild.');
@@ -726,9 +721,8 @@ export class Renderer {
     }
 
     if (policyChanged) {
-      console.log(`[Anime4KWebExt] Updating restore suppression (preserveDetail=${nextPreserveDetail}, builtIn=${nextIsBuiltInMode}).`);
+      console.log(`[Anime4KWebExt] Updating restore suppression (preserveDetail=${nextPreserveDetail}).`);
       this.preserveDetail = nextPreserveDetail;
-      this.isBuiltInMode = nextIsBuiltInMode;
     }
 
     console.log('[Anime4KWebExt] Rebuilding pipeline due to configuration update.');

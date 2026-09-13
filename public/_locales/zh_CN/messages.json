@@ -41,7 +41,10 @@
     "description": "渲染失败错误消息"
   },
   "whitelistEnable": {
-    "message": "启用白名单"
+    "message": "启用白名单模式"
+  },
+  "whitelistEnableDesc": {
+    "message": "启用后，仅增强白名单中的网站和页面。"
   },
   "addCurrentPage": {
     "message": "页面"
@@ -239,6 +242,21 @@
   },
   "customModes": {
     "message": "自定义模式"
+  },
+  "restorePolicyBadge": {
+    "message": "还原"
+  },
+  "restorePolicyBadgeTitle": {
+    "message": "还原通道 — 开启“快速模式”时可能被跳过。"
+  },
+  "preserveDetailLabel": {
+    "message": "快速模式 — 保留细节"
+  },
+  "preserveDetailDesc": {
+    "message": "跳过目标分辨率下的末尾还原通道，大幅提升速度。适用于所有模式，包括自定义模式。关闭并不总是画质更高——在许多视频中这些通道变化很小，有些片段在没有它们时看起来同样好甚至更好。"
+  },
+  "preserveDetailModeNote": {
+    "message": "开启“快速模式”后，末尾的还原通道可能会被跳过。关闭它会运行完整链，但不一定画质更高。"
   },
   "modeDescA": {
     "message": "适用于大多数 1080p 动画、较旧的 720p，以及模糊或严重压缩的标清源。"
@@ -499,5 +517,77 @@
   },
   "diagnostics": {
     "message": "诊断"
+  },
+  "diagnosticsMode": {
+    "message": "模式"
+  },
+  "diagnosticsTier": {
+    "message": "性能档位"
+  },
+  "diagnosticsInputResolution": {
+    "message": "输入"
+  },
+  "diagnosticsTargetResolution": {
+    "message": "输出"
+  },
+  "diagnosticsCustomMode": {
+    "message": "自定义"
+  },
+  "diagnosticsFrameLabel": {
+    "message": "帧"
+  },
+  "diagnosticsCpu": {
+    "message": "CPU"
+  },
+  "diagnosticsGpuShare": {
+    "message": "GPU"
+  },
+  "diagnosticsGpuTimings": {
+    "message": "GPU 耗时"
+  },
+  "diagnosticsGpuTimingsUnavailable": {
+    "message": "GPU 耗时不可用"
+  },
+  "diagnosticsTimingPass": {
+    "message": "通道"
+  },
+  "diagnosticsTimingCpuP50": {
+    "message": "CPU p50"
+  },
+  "diagnosticsTimingCpuP95": {
+    "message": "CPU p95"
+  },
+  "diagnosticsTimingGpuP50": {
+    "message": "GPU p50"
+  },
+  "diagnosticsTimingGpuP95": {
+    "message": "GPU p95"
+  },
+  "diagnosticsTimingGpuP99": {
+    "message": "GPU p99"
+  },
+  "diagnosticsTimingTotal": {
+    "message": "GPU 总计"
+  },
+  "diagnosticsFramesSampled": {
+    "message": "采样帧数"
+  },
+  "diagnosticsCpuTimingLimited": {
+    "message": "CPU 计时精度限制为 0.1 ms"
+  },
+  "diagnosticsDetail": {
+    "message": "详细程度"
+  },
+  "diagnosticsDetailDesc": {
+    "message": "选择诊断叠加层显示的详细程度。"
+  },
+  "diagnosticsDetailAuto": {
+    "message": "自动（小视频自动精简）"
+  },
+  "diagnosticsDetailCompact": {
+    "message": "精简"
+  },
+  "diagnosticsDetailExpanded": {
+    "message": "详细"
   }
 }

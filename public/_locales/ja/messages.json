@@ -41,7 +41,10 @@
     "description": "レンダリング失敗エラーメッセージ"
   },
   "whitelistEnable": {
-    "message": "ホワイトリストを有効化"
+    "message": "ホワイトリストモードを有効化"
+  },
+  "whitelistEnableDesc": {
+    "message": "有効にすると、ホワイトリストにあるサイトとページのみが拡張されます。"
   },
   "addCurrentPage": {
     "message": "ページ"
@@ -240,6 +243,21 @@
   },
   "customModes": {
     "message": "カスタムモード"
+  },
+  "restorePolicyBadge": {
+    "message": "復元"
+  },
+  "restorePolicyBadgeTitle": {
+    "message": "復元パス —「高速モード」オン時はスキップされることがあります。"
+  },
+  "preserveDetailLabel": {
+    "message": "高速モード — 細部を保持"
+  },
+  "preserveDetailDesc": {
+    "message": "目標解像度での末尾の復元パスを省略し、大幅な高速化を実現します。組み込み・カスタムを問わずすべてのモードに適用されます。オフが常に高画質になるとは限りません。多くの動画ではこれらのパスによる変化は小さく、むしろないほうが同等以上に見えるクリップもあります。"
+  },
+  "preserveDetailModeNote": {
+    "message": "「高速モード」がオンの場合、末尾の復元パスはスキップされることがあります。オフにするとチェーン全体を実行しますが、常に高画質になるとは限りません。"
   },
   "modeDescA": {
     "message": "多くの 1080p アニメ、古い 720p、ぼやけた／強く圧縮された SD 向け。"
@@ -500,5 +518,77 @@
   },
   "diagnostics": {
     "message": "診断"
+  },
+  "diagnosticsMode": {
+    "message": "モード"
+  },
+  "diagnosticsTier": {
+    "message": "ティア"
+  },
+  "diagnosticsInputResolution": {
+    "message": "入力"
+  },
+  "diagnosticsTargetResolution": {
+    "message": "出力"
+  },
+  "diagnosticsCustomMode": {
+    "message": "カスタム"
+  },
+  "diagnosticsFrameLabel": {
+    "message": "フレーム"
+  },
+  "diagnosticsCpu": {
+    "message": "CPU"
+  },
+  "diagnosticsGpuShare": {
+    "message": "GPU"
+  },
+  "diagnosticsGpuTimings": {
+    "message": "GPU タイミング"
+  },
+  "diagnosticsGpuTimingsUnavailable": {
+    "message": "GPU タイミングは利用できません"
+  },
+  "diagnosticsTimingPass": {
+    "message": "パス"
+  },
+  "diagnosticsTimingCpuP50": {
+    "message": "CPU p50"
+  },
+  "diagnosticsTimingCpuP95": {
+    "message": "CPU p95"
+  },
+  "diagnosticsTimingGpuP50": {
+    "message": "GPU p50"
+  },
+  "diagnosticsTimingGpuP95": {
+    "message": "GPU p95"
+  },
+  "diagnosticsTimingGpuP99": {
+    "message": "GPU p99"
+  },
+  "diagnosticsTimingTotal": {
+    "message": "GPU 合計"
+  },
+  "diagnosticsFramesSampled": {
+    "message": "サンプル数"
+  },
+  "diagnosticsCpuTimingLimited": {
+    "message": "CPU タイミングは 0.1 ms 分解能に制限されています"
+  },
+  "diagnosticsDetail": {
+    "message": "詳細レベル"
+  },
+  "diagnosticsDetailDesc": {
+    "message": "診断オーバーレイの表示詳細を選択します。"
+  },
+  "diagnosticsDetailAuto": {
+    "message": "自動（小さい動画ではコンパクト）"
+  },
+  "diagnosticsDetailCompact": {
+    "message": "コンパクト"
+  },
+  "diagnosticsDetailExpanded": {
+    "message": "詳細"
   }
 }

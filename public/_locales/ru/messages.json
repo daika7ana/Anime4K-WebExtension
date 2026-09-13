@@ -41,7 +41,10 @@
     "description": "Текст ошибки для неудавшегося рендеринга"
   },
   "whitelistEnable": {
-    "message": "Включить белый список"
+    "message": "Включить режим белого списка"
+  },
+  "whitelistEnableDesc": {
+    "message": "Если включено, улучшаются только сайты и страницы из белого списка."
   },
   "addCurrentPage": {
     "message": "Страница"
@@ -239,6 +242,21 @@
   },
   "customModes": {
     "message": "Пользовательские режимы"
+  },
+  "restorePolicyBadge": {
+    "message": "Восстановление"
+  },
+  "restorePolicyBadgeTitle": {
+    "message": "Проход восстановления — может пропускаться, когда включён «Быстрый режим»."
+  },
+  "preserveDetailLabel": {
+    "message": "Быстрый режим — сохранение деталей"
+  },
+  "preserveDetailDesc": {
+    "message": "Пропускает завершающие проходы восстановления на целевое разрешение для значительного ускорения. Применяется ко всем режимам, включая пользовательские. Выключение не всегда даёт более высокое качество — на многих видео эти проходы мало что меняют, а некоторые клипы выглядят так же хорошо или лучше без них."
+  },
+  "preserveDetailModeNote": {
+    "message": "Когда включён «Быстрый режим», завершающие проходы восстановления могут пропускаться. Отключение запускает всю цепочку, что не всегда даёт более высокое качество."
   },
   "modeDescA": {
     "message": "Для большинства 1080p-аниме, старого 720p и размытого или сильно сжатого SD."
@@ -499,5 +517,77 @@
   },
   "diagnostics": {
     "message": "Диагностика"
+  },
+  "diagnosticsMode": {
+    "message": "Режим"
+  },
+  "diagnosticsTier": {
+    "message": "Уровень"
+  },
+  "diagnosticsInputResolution": {
+    "message": "Вход"
+  },
+  "diagnosticsTargetResolution": {
+    "message": "Выход"
+  },
+  "diagnosticsCustomMode": {
+    "message": "Пользовательский"
+  },
+  "diagnosticsFrameLabel": {
+    "message": "Кадр"
+  },
+  "diagnosticsCpu": {
+    "message": "CPU"
+  },
+  "diagnosticsGpuShare": {
+    "message": "GPU"
+  },
+  "diagnosticsGpuTimings": {
+    "message": "Тайминги GPU"
+  },
+  "diagnosticsGpuTimingsUnavailable": {
+    "message": "Тайминги GPU недоступны"
+  },
+  "diagnosticsTimingPass": {
+    "message": "Проход"
+  },
+  "diagnosticsTimingCpuP50": {
+    "message": "CPU p50"
+  },
+  "diagnosticsTimingCpuP95": {
+    "message": "CPU p95"
+  },
+  "diagnosticsTimingGpuP50": {
+    "message": "GPU p50"
+  },
+  "diagnosticsTimingGpuP95": {
+    "message": "GPU p95"
+  },
+  "diagnosticsTimingGpuP99": {
+    "message": "GPU p99"
+  },
+  "diagnosticsTimingTotal": {
+    "message": "Всего GPU"
+  },
+  "diagnosticsFramesSampled": {
+    "message": "Кадров выбрано"
+  },
+  "diagnosticsCpuTimingLimited": {
+    "message": "Тайминги CPU ограничены разрешением 0,1 мс"
+  },
+  "diagnosticsDetail": {
+    "message": "Уровень детализации"
+  },
+  "diagnosticsDetailDesc": {
+    "message": "Выберите объём сведений в оверлее диагностики."
+  },
+  "diagnosticsDetailAuto": {
+    "message": "Авто (компактно на маленьких видео)"
+  },
+  "diagnosticsDetailCompact": {
+    "message": "Компактный"
+  },
+  "diagnosticsDetailExpanded": {
+    "message": "Подробный"
   }
 }

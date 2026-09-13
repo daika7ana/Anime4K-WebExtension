@@ -264,7 +264,6 @@ describe('buildEffectPipelines', () => {
     videoHeight: number;
     videoFrameTexture: GPUTexture;
     preserveDetail: boolean;
-    isBuiltInMode: boolean;
   }> = {}) {
     const videoWidth = overrides.videoWidth ?? 1920;
     const videoHeight = overrides.videoHeight ?? 1080;
@@ -285,7 +284,6 @@ describe('buildEffectPipelines', () => {
       onProgress: overrides.onProgress,
       isStale: overrides.isStale ?? (() => false),
       preserveDetail: overrides.preserveDetail,
-      isBuiltInMode: overrides.isBuiltInMode,
       labels: overrides.labels,
     };
   }
@@ -530,7 +528,7 @@ describe('buildEffectPipelines', () => {
 
     await buildEffectPipelines(params);
 
-    // Turning "Preserve fine detail" off restores the original full-enhancement
+    // Turning "Fast mode — Preserve detail" off restores the original full-enhancement
     // chain: both trailing CNNUL restores run after the Downscale.
     expect(labels).toEqual([
       'ClampHighlights',
@@ -545,9 +543,10 @@ describe('buildEffectPipelines', () => {
 
   it('preserveDetail:false reproduces the full V1 chain across representative built-in modes/tiers', async () => {
     // V1 ('off') is the original pre-restore-suppression chain: only the later
-    // upscalers are suppressed and every restore is retained. A built-in mode
-    // with preserveDetail:false must match the chain emitted for the same custom
-    // chain (isBuiltInMode:false), which has always used the full policy.
+    // upscalers are suppressed and every restore is retained. After the policy
+    // was unified across built-in and custom chains, a mode chain built with
+    // preserveDetail:false must match the same chain built as a custom chain
+    // with the same policy.
     const cases: Array<[BaseMode, PerformanceTier]> = [
       ['A', 'ultra'],
       ['B', 'balanced'],
@@ -560,23 +559,34 @@ describe('buildEffectPipelines', () => {
       const v1Labels: string[] = [];
       await buildEffectPipelines(buildParams({ effects, labels: v1Labels, preserveDetail: false }));
       const customLabels: string[] = [];
-      await buildEffectPipelines(buildParams({ effects, labels: customLabels, isBuiltInMode: false }));
+      await buildEffectPipelines(buildParams({ effects, labels: customLabels, preserveDetail: false }));
       expect(v1Labels, `${mode}/${tier}`).toEqual(customLabels);
     }
   });
 
-  it('custom chains keep every restore (suppression off)', async () => {
-    const labels: string[] = [];
-    const params = buildParams({
-      effects: resolveEffectChain('A+A', 'ultra'),
-      labels,
-      isBuiltInMode: false,
-    });
+  it('custom chains honor the preserveDetail policy (trailing suppression)', async () => {
+    const effects = resolveEffectChain('A+A', 'ultra');
 
-    await buildEffectPipelines(params);
+    // preserveDetail true (default): custom chains now suppress the trailing
+    // restores emitted after the target-exact Downscale, like built-in modes.
+    const suppressed: string[] = [];
+    await buildEffectPipelines(
+      buildParams({ effects, labels: suppressed, preserveDetail: true }),
+    );
+    expect(suppressed).toEqual([
+      'ClampHighlights',
+      'CNNUL',
+      'CNNx2UL',
+      'Downscale',
+      'ClampHighlightsApply',
+    ]);
 
-    // User-authored chains are never mutated: both trailing restores survive.
-    expect(labels).toEqual([
+    // preserveDetail false: custom chains keep every restore (V1).
+    const full: string[] = [];
+    await buildEffectPipelines(
+      buildParams({ effects, labels: full, preserveDetail: false }),
+    );
+    expect(full).toEqual([
       'ClampHighlights',
       'CNNUL',
       'CNNx2UL',
@@ -607,7 +617,7 @@ describe('buildEffectPipelines', () => {
       'Downscale',
       'ClampHighlightsApply',
     ]);
-    // V1 ("Preserve fine detail" off): every restore is retained.
+    // V1 ("Fast mode" off): every restore is retained.
     expect(await build(false)).toEqual([
       'ClampHighlights',
       'CNNUL',
@@ -650,7 +660,7 @@ describe('buildEffectPipelines', () => {
   it('preserveDetail at 4K is a no-op on a non-triggering chain (A/ultra)', async () => {
     // A/ultra @4K = [ClampHighlights, CNNUL, CNNx2UL, CNNx2UL] never triggers the
     // safe-geometry pre-pass (no suppressFromIndex and no final Downscale), so the
-    // V2 trailing restore window does not exist and "Preserve fine detail" must
+    // V2 trailing restore window does not exist and "Fast mode" must
     // produce the exact same chain. This pins the no-op as intentional.
     const build = async (preserveDetail: boolean) => {
       const labels: string[] = [];
@@ -673,6 +683,50 @@ describe('buildEffectPipelines', () => {
       'CNNx2UL',
       'Downscale',
       'CNNx2UL',
+      'ClampHighlightsApply',
+    ]);
+  });
+
+  it('C+A / ultra @2K->4K + trailing CAS suppresses restores with preserveDetail true', async () => {
+    // Acceptance case: a custom-authored chain is now governed by the same
+    // "Fast mode" policy as built-in modes. Source 2560x1440 to
+    // target 3840x2160: the scale-1 CNNUL restore and the suppressed CNNx2UL
+    // upscaler are dropped, leaving the Denoise upscale, the target-exact
+    // Downscale, and the user's trailing CAS before the deferred apply stage.
+    const effects = [
+      ...resolveEffectChain('C+A', 'ultra'),
+      mkEffect('CAS', { sharpness: 0.8 }),
+    ];
+    const build = async (preserveDetail: boolean) => {
+      const labels: string[] = [];
+      await buildEffectPipelines(buildParams({
+        videoWidth: 2560,
+        videoHeight: 1440,
+        targetDimensions: { width: 3840, height: 2160 },
+        effects,
+        labels,
+        preserveDetail,
+      }));
+      return labels;
+    };
+
+    expect(await build(true)).toEqual([
+      'ClampHighlights',
+      'DenoiseCNNx2VL',
+      'Downscale',
+      'CAS',
+      'ClampHighlightsApply',
+    ]);
+
+    // preserveDetail false: V1 keeps the trailing scale-1 CNNUL restore. (The
+    // CNNx2UL upscaler is suppressed by safe-geometry at this source/target
+    // ratio independently of the restore policy, in both modes.)
+    expect(await build(false)).toEqual([
+      'ClampHighlights',
+      'DenoiseCNNx2VL',
+      'Downscale',
+      'CNNUL',
+      'CAS',
       'ClampHighlightsApply',
     ]);
   });

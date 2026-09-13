@@ -168,13 +168,13 @@ export function planIntermediateDownscale(params: {
 /**
  * How much scale-1 `restore` suppression the emitted chain applies.
  *
- *  - `'trailing'` — V2 (default for built-in modes): drop scale-1 restores that
- *                   run after the emitted target-exact final Downscale. Their
- *                   work is largely redundant at the target resolution, so
- *                   skipping them preserves fine detail (and is cheaper).
+ *  - `'trailing'` — V2 (the default): drop scale-1 restores that run after the
+ *                   emitted target-exact final Downscale. Their work is largely
+ *                   redundant at the target resolution, so skipping them avoids
+ *                   that softening (and is cheaper).
  *  - `'off'`      — V1: keep every restore, i.e. the original full-enhancement
- *                   chain. Used when the "Preserve fine detail" toggle is off
- *                   and for custom user-authored chains.
+ *                   chain. Used when the "Fast mode — Preserve detail" toggle is
+ *                   off.
  */
 export type RestoreSuppression = 'off' | 'trailing';
 

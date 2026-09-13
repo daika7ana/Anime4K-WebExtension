@@ -12,6 +12,7 @@ import type {
   CustomMode,
   EnhancementEffect,
   PerformanceTier,
+  DiagnosticsDetailMode,
 } from '../types';
 import { descriptorToCatalogEffect } from './effects-map';
 import { resolveEffectReference } from './effect-registry';
@@ -69,6 +70,8 @@ const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
   gpuBenchmarkResult: null,
   hasCompletedOnboarding: false,
   showDiagnostics: false,
+  // 'auto' expands on normal videos and compacts on small ones.
+  diagnosticsDetail: 'auto',
   // V2 (skip target-resolution restore passes) is the default; a missing key
   // normalizes to `true`, so no migration is needed.
   preserveDetail: true,
@@ -143,6 +146,16 @@ function coercePerformanceTier(value: unknown, fallback: PerformanceTier): Perfo
   if (value === undefined) return fallback;
   if (isPerformanceTier(value)) return value;
   warnInvalidSetting('performanceTier', value);
+  return fallback;
+}
+
+function coerceDiagnosticsDetail(
+  value: unknown,
+  fallback: DiagnosticsDetailMode,
+): DiagnosticsDetailMode {
+  if (value === undefined) return fallback;
+  if (value === 'auto' || value === 'compact' || value === 'expanded') return value;
+  warnInvalidSetting('diagnosticsDetail', value);
   return fallback;
 }
 
@@ -231,6 +244,10 @@ export function normalizeLocalSettings(data: Record<string, unknown>): LocalSett
       data.showDiagnostics,
       DEFAULT_LOCAL_SETTINGS.showDiagnostics,
     ),
+    diagnosticsDetail: coerceDiagnosticsDetail(
+      data.diagnosticsDetail,
+      DEFAULT_LOCAL_SETTINGS.diagnosticsDetail ?? 'auto',
+    ),
     // A stale legacy `maxDetail` key is deliberately not read (ignored/dropped);
     // a missing `preserveDetail` normalizes to the default `true`.
     preserveDetail: coerceBoolean(
@@ -274,6 +291,7 @@ export async function getLocalSettings(): Promise<LocalSettings> {
       'gpuAdapterInfo',
       'hasCompletedOnboarding',
       'showDiagnostics',
+      'diagnosticsDetail',
       'preserveDetail',
     ], (data) => {
       resolve(normalizeLocalSettings(data));
@@ -377,6 +395,7 @@ export async function saveSettings(settings: Partial<Anime4KWebExtSettings>): Pr
     'gpuBenchmarkResult',
     'hasCompletedOnboarding',
     'showDiagnostics',
+    'diagnosticsDetail',
     'preserveDetail',
   ];
 

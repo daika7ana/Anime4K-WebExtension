@@ -296,7 +296,12 @@ export class VideoEnhancer {
         inputResolution: formatResolution(this.video.videoWidth, this.video.videoHeight),
         targetResolution: formatResolution(targetDimensions.width, targetDimensions.height),
       };
-      this.diagnosticsOverlay = DiagnosticsOverlay.create(this.video, adapterInfo, diagnosticsInfo);
+      this.diagnosticsOverlay = DiagnosticsOverlay.create(
+        this.video,
+        adapterInfo,
+        diagnosticsInfo,
+        localSettings.diagnosticsDetail ?? 'auto',
+      );
       this.diagnosticsOverlay.show();
     }
 
@@ -307,12 +312,9 @@ export class VideoEnhancer {
       targetDimensions,
       // GPU timings are only collected while the diagnostics overlay is shown.
       enableGpuTimings: showDiagnostics,
-      // Restore-suppression policy: built-in modes default to V2 ("trailing",
-      // the "Preserve fine detail" setting), turning it off selects the V1
-      // full-enhancement chain, and custom chains keep `'off'` (the builder maps
-      // these). Reset on the next rebuild.
+      // Restore-suppression policy: "trailing" (V2) when "Fast mode — Preserve detail"
+      // is on, and the V1 full-enhancement chain when off. Applies to all modes.
       preserveDetail: localSettings.preserveDetail ?? true,
-      isBuiltInMode: selectedMode.isBuiltIn,
       onError: async (error: Error) => {
         // A destroyed enhancer has no live UI/resources; never surface errors or
         // re-run teardown for it (e.g. a frame failing after the element was removed).
@@ -402,7 +404,7 @@ export class VideoEnhancer {
     const baseEffects = getEffectsForMode(selectedMode, newSettings.performanceTier);
     const effects = this.getEffectsWithColorGrading(baseEffects, newSettings.colorGrading);
 
-    // Local prefs (Preserve fine detail) are applied at build time; read them
+    // Local prefs ("Fast mode") are applied at build time; read them
     // before the configuration update so a policy change is detected and the
     // chain rebuilds.
     const localSettings = await getLocalSettings();
@@ -412,7 +414,6 @@ export class VideoEnhancer {
       effects: effects,
       targetDimensions: newTargetDimensions,
       preserveDetail: localSettings.preserveDetail ?? true,
-      isBuiltInMode: selectedMode.isBuiltIn,
     });
 
     this.currentModeId = selectedMode.id;
@@ -433,9 +434,15 @@ export class VideoEnhancer {
     if (localSettings.showDiagnostics) {
       if (!this.diagnosticsOverlay) {
         const adapterInfo = await this.getAdapterInfo();
-        this.diagnosticsOverlay = DiagnosticsOverlay.create(this.video, adapterInfo, diagnosticsInfo);
+        this.diagnosticsOverlay = DiagnosticsOverlay.create(
+          this.video,
+          adapterInfo,
+          diagnosticsInfo,
+          localSettings.diagnosticsDetail ?? 'auto',
+        );
         this.diagnosticsOverlay.show();
       } else {
+        this.diagnosticsOverlay.setDetailMode(localSettings.diagnosticsDetail ?? 'auto');
         this.diagnosticsOverlay.setInfo(diagnosticsInfo);
       }
     } else if (this.diagnosticsOverlay) {

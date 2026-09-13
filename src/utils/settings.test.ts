@@ -421,6 +421,14 @@ describe('normalizeLocalSettings', () => {
     expect('maxDetail' in result).toBe(false);
   });
 
+  it('defaults diagnosticsDetail to auto and accepts valid modes', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(normalizeLocalSettings({}).diagnosticsDetail).toBe('auto');
+    expect(normalizeLocalSettings({ diagnosticsDetail: 'compact' }).diagnosticsDetail).toBe('compact');
+    expect(normalizeLocalSettings({ diagnosticsDetail: 'expanded' }).diagnosticsDetail).toBe('expanded');
+    expect(normalizeLocalSettings({ diagnosticsDetail: 'nope' }).diagnosticsDetail).toBe('auto');
+  });
+
   it('preserves valid values', () => {
     const result = normalizeLocalSettings({
       performanceTier: 'quality',

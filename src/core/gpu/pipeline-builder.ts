@@ -56,19 +56,13 @@ interface BuildPipelinesParams {
   /** Check if a newer build has superseded this one (generation counter) */
   isStale: () => boolean;
   /**
-   * Local "Preserve fine detail" preference. For built-in modes only, keeps the
-   * V2 restore policy (`'trailing'`): skip the scale-1 restore passes emitted
-   * after the target-exact final Downscale. When `false`, built-in modes use the
-   * full-enhancement V1 chain (`'off'`, every restore retained). Custom chains
-   * always use `'off'` regardless. Defaults to `true` (V2).
+   * Local "Fast mode — Preserve detail" preference. Applies to every mode, built-in
+   * or custom: when `true` (the default), keeps the V2 restore policy
+   * (`'trailing'`) and skips the scale-1 restore passes emitted after the
+   * target-exact final Downscale; when `false`, uses the full-enhancement V1
+   * chain (`'off'`, every restore retained).
    */
   preserveDetail?: boolean;
-  /**
-   * Whether the active chain is a built-in mode (tier-driven). Custom chains
-   * are authored by the user and are never silently mutated. Defaults to
-   * `true` so existing callers/tests keep the built-in V2 behavior.
-   */
-  isBuiltInMode?: boolean;
   /**
    * Optional out-parameter receiving one label per built pipeline, in encode
    * order: the effect's `className` for each effect pipeline, `'Downscale'` for
@@ -93,7 +87,7 @@ export async function buildEffectPipelines(params: BuildPipelinesParams): Promis
   const {
     device, videoFrameTexture, video, targetDimensions, effects,
     oldPipelines, preWarmer: pipelinePreWarmer, onProgress, isStale, labels,
-    preserveDetail = true, isBuiltInMode = true,
+    preserveDetail = true,
   } = params;
 
   // Wait for the GPU queue to finish before destroying old pipelines to avoid resource contention
@@ -162,11 +156,11 @@ export async function buildEffectPipelines(params: BuildPipelinesParams): Promis
       resolution.status === 'resolved'
       && resolution.effect.descriptor.category === 'color',
   );
-  // Built-in modes default to V2 (drop restores after the final Downscale).
-  // Turning "Preserve fine detail" off restores the full-enhancement V1 chain,
-  // and custom chains are user-authored so they are never mutated.
-  const restoreSuppression: RestoreSuppression =
-    isBuiltInMode && preserveDetail ? 'trailing' : 'off';
+  // The "Fast mode" policy applies to every mode, built-in and
+  // custom alike: it defaults to V2 (drop restores after the final Downscale),
+  // and turning "Fast mode" off restores the full-enhancement V1
+  // chain for that chain.
+  const restoreSuppression: RestoreSuppression = preserveDetail ? 'trailing' : 'off';
   const remainingUpscaleFactors = computeRemainingUpscaleFactors(
     upscaleFactors.map((upscaleFactor) => ({ upscaleFactor })),
   );

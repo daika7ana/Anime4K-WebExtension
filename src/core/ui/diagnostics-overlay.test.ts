@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ProfilerSnapshot } from '@core/gpu/gpu-timestamp-profiler';
-import { DiagnosticsOverlay } from './diagnostics-overlay';
+import { DiagnosticsOverlay, shortenAdapter, truncateMiddle } from './diagnostics-overlay';
 
 // Surface the English fallbacks so assertions can target user-visible strings.
 vi.mock('@utils/i18n', () => ({
@@ -59,6 +59,11 @@ describe('DiagnosticsOverlay', () => {
       unobserve() {}
       disconnect() {}
     });
+    // The one-time display-refresh probe must never resolve in tests: the
+    // stubbed constant `performance.now()` would otherwise make the measurement
+    // nondeterministic. A no-op rAF keeps the 60 Hz fallback budget.
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 0));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
   });
 
   afterEach(() => {
@@ -386,9 +391,16 @@ describe('DiagnosticsOverlay', () => {
       expect(grid.style.display).toBe('grid');
       expect(grid.textContent).toContain('EffectA');
       expect(grid.textContent).toContain('EffectB');
-      // CPU p50/p95 and GPU p50/p95/p99 for EffectA.
-      expect(grid.textContent).toContain('1.20');
-      expect(grid.textContent).toContain('2.50');
+      // The stubbed clock is coarse, so per-pass CPU columns are dropped and the
+      // grid renders GPU columns only. CPU values must never be shown as if the
+      // 0.1 ms-resolution numbers were meaningful.
+      expect(grid.classList.contains('timing-grid--gpu-only')).toBe(true);
+      expect(grid.textContent).not.toContain('CPU p50');
+      expect(grid.textContent).not.toContain('1.20');
+      expect(grid.textContent).not.toContain('2.50');
+      expect(grid.textContent).not.toContain('3.00');
+      expect(grid.textContent).not.toContain('4.00');
+      // GPU p50/p95/p99 for EffectA.
       expect(grid.textContent).toContain('0.80');
       expect(grid.textContent).toContain('1.40');
       expect(grid.textContent).toContain('2.00');
@@ -398,6 +410,10 @@ describe('DiagnosticsOverlay', () => {
       // Totals (p50 / p95).
       expect(grid.textContent).toContain('7.50');
       expect(grid.textContent).toContain('9.25');
+      // Coarse-timer footnote.
+      const note = shadow.querySelector('.timing-note') as HTMLElement;
+      expect(note.style.display).toBe('block');
+      expect(note.textContent).toBe('CPU timings limited to 0.1 ms');
       // Sample count readout.
       expect(shadow.querySelector('.timing-frames')?.textContent).toContain('128');
 
@@ -502,6 +518,196 @@ describe('DiagnosticsOverlay', () => {
 
       overlay.destroy();
       expect(section.isConnected).toBe(false);
+    });
+  });
+
+  describe('detail mode', () => {
+    function containerOf(video: HTMLVideoElement): HTMLElement {
+      return video.parentElement?.querySelector('div')?.shadowRoot
+        ?.querySelector('.diagnostics') as HTMLElement;
+    }
+
+    it('applies the compact class when setDetailMode("compact") is selected', () => {
+      const video = createTestVideo();
+      const overlay = DiagnosticsOverlay.create(video, 'Test GPU');
+
+      overlay.setDetailMode('compact');
+      expect(containerOf(video).classList.contains('is-compact')).toBe(true);
+
+      overlay.setDetailMode('expanded');
+      expect(containerOf(video).classList.contains('is-compact')).toBe(false);
+
+      overlay.destroy();
+    });
+
+    it('defaults to expanded on the auto path and names the budget reference', () => {
+      const video = createTestVideo();
+      const overlay = DiagnosticsOverlay.create(video, 'Test GPU');
+
+      const host = video.parentElement?.querySelector('div');
+      expect(host?.shadowRoot?.textContent).toContain('Frame \u00b7 16.7 ms');
+
+      overlay.destroy();
+    });
+
+    it('middle-truncates long pass labels only in compact mode', () => {
+      const video = createTestVideo();
+      const overlay = DiagnosticsOverlay.create(video, 'Test GPU');
+      const snapshot = activeSnapshot({
+        passes: [{ label: 'ClampHighlightsApplyStrength', gpuP50: 1 }],
+      });
+
+      overlay.update(0, 4, snapshot);
+      let grid = containerOf(video).querySelector('.timing-grid') as HTMLElement;
+      expect(grid.textContent).toContain('ClampHighlightsApplyStrength');
+
+      overlay.setDetailMode('compact');
+      grid = containerOf(video).querySelector('.timing-grid') as HTMLElement;
+      expect(grid.textContent).not.toContain('ClampHighlightsApplyStrength');
+      expect(grid.textContent).toContain('\u2026');
+
+      overlay.destroy();
+    });
+  });
+
+  describe('budget + hot-pass encoding', () => {
+    function containerOf(video: HTMLVideoElement): HTMLElement {
+      return video.parentElement?.querySelector('div')?.shadowRoot
+        ?.querySelector('.diagnostics') as HTMLElement;
+    }
+
+    it('marks a 60 fps frame over budget via the bar (no percent badge)', () => {
+      const video = createTestVideo();
+      const overlay = DiagnosticsOverlay.create(video, 'Test GPU');
+
+      overlay.update(0, 4);
+      currentTime = 16.67; // 59.99 fps, one display interval
+      overlay.update(0, 4);
+
+      const container = containerOf(video);
+      const row = container.querySelector('.metric--frame') as HTMLElement;
+      expect(row.getAttribute('data-gated')).toBe('true');
+      expect(row.getAttribute('data-state')).toBe('over');
+      expect(container.getAttribute('data-state')).toBe('over');
+
+      // The numeric badge was removed; the bar is the only budget indicator.
+      expect(row.querySelector('.metric-badge')).toBeNull();
+      const fill = container.querySelector('.budget-fill') as HTMLElement;
+      expect(fill.style.width).toBe('100%');
+
+      overlay.destroy();
+    });
+
+    it('clamps the budget bar and shows warn before the over threshold', () => {
+      const video = createTestVideo();
+      const overlay = DiagnosticsOverlay.create(video, 'Test GPU');
+
+      // Ten fast (100 fps) frames keep the gated state meaningful, then a
+      // single 15.5 ms frame lands at ~93% of the 16.7 ms budget → warn.
+      overlay.update(0, 4);
+      for (let i = 0; i < 10; i++) {
+        currentTime += 10;
+        overlay.update(0, 4);
+      }
+      currentTime += 15.5;
+      overlay.update(0, 4);
+
+      const container = containerOf(video);
+      const row = container.querySelector('.metric--frame') as HTMLElement;
+      expect(row.getAttribute('data-gated')).toBe('true');
+      expect(row.getAttribute('data-state')).toBe('warn');
+
+      const fill = container.querySelector('.budget-fill') as HTMLElement;
+      const width = parseFloat(fill.style.width);
+      expect(width).toBeGreaterThanOrEqual(90);
+      expect(width).toBeLessThanOrEqual(100);
+
+      overlay.destroy();
+    });
+
+    it('clamps the budget bar at 100% for a frame far over budget', () => {
+      const video = createTestVideo();
+      const overlay = DiagnosticsOverlay.create(video, 'Test GPU');
+
+      // Ten 10 ms frames keep fps well above the 45 fps gate, then a 40 ms
+      // spike is ~240% of the budget but must never overflow the bar.
+      overlay.update(0, 4);
+      for (let i = 0; i < 10; i++) {
+        currentTime += 10;
+        overlay.update(0, 4);
+      }
+      currentTime += 40;
+      overlay.update(0, 4);
+
+      const container = containerOf(video);
+      const row = container.querySelector('.metric--frame') as HTMLElement;
+      expect(row.getAttribute('data-gated')).toBe('true');
+      expect(row.getAttribute('data-state')).toBe('over');
+      expect((container.querySelector('.budget-fill') as HTMLElement).style.width).toBe('100%');
+
+      overlay.destroy();
+    });
+
+    it('keeps 24 fps content neutral (display budget is not a fault signal)', () => {
+      const video = createTestVideo();
+      const overlay = DiagnosticsOverlay.create(video, 'Test GPU');
+
+      overlay.update(0, 4);
+      currentTime = 1000 / 24;
+      overlay.update(0, 4);
+
+      const row = containerOf(video).querySelector('.metric--frame') as HTMLElement;
+      expect(row.getAttribute('data-gated')).toBe('false');
+      expect(row.getAttribute('data-state')).toBe('ok');
+
+      overlay.destroy();
+    });
+
+    it('encodes relative GPU cost with heat and highlights the dominant pass', () => {
+      const video = createTestVideo();
+      const overlay = DiagnosticsOverlay.create(video, 'Test GPU');
+
+      overlay.update(0, 4, activeSnapshot({
+        passes: [
+          { label: 'BigPass', gpuP50: 10.5 },
+          { label: 'SmallPass', gpuP50: 0.07 },
+        ],
+      }));
+
+      const grid = containerOf(video).querySelector('.timing-grid') as HTMLElement;
+      const passes = grid.querySelectorAll('.timing-pass:not(.timing-head)');
+      const big = passes[0] as HTMLElement;
+      const small = passes[1] as HTMLElement;
+
+      expect(big.style.getPropertyValue('--heat')).toBe('1');
+      expect(big.classList.contains('timing-pass--hot')).toBe(true);
+      // 10.5 ms is under the 16.7 ms budget, so the dominant pass is not red.
+      expect(big.classList.contains('timing-pass--over')).toBe(false);
+      expect(small.classList.contains('timing-pass--hot')).toBe(false);
+      expect(Number(small.style.getPropertyValue('--heat'))).toBeLessThan(0.1);
+
+      overlay.destroy();
+    });
+  });
+
+  describe('helper formatters', () => {
+    it('middle-truncates keeping head and tail', () => {
+      expect(truncateMiddle('short', 20)).toBe('short');
+      const out = truncateMiddle('ClampHighlightsApply', 11);
+      expect(out).toHaveLength(11);
+      expect(out).toContain('\u2026');
+      expect(out.startsWith('Clam')).toBe(true);
+      expect(out.endsWith('ly')).toBe(true);
+    });
+
+    it('shortens ANGLE-wrapped adapter strings and keeps the model', () => {
+      const shortened = shortenAdapter(
+        'ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 Direct3D11 vs_5_0 ps_5_0, D3D11)',
+      );
+      expect(shortened).toContain('RTX 3080');
+      expect(shortened).not.toContain('ANGLE');
+      expect(shortened.length).toBeLessThanOrEqual(28);
+      expect(shortenAdapter('Intel Iris Xe Graphics')).toBe('Intel Iris Xe Graphics');
     });
   });
 });

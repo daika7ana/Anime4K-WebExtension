@@ -21,10 +21,12 @@ export function initWhitelistPanel(
   importBtn: HTMLButtonElement,
   autoEnableToggle: HTMLInputElement,
   autoEnableSettleInput: HTMLInputElement,
+  whitelistEnabledToggle: HTMLInputElement,
 ): { render(): void } {
 
   function render() {
     const state = ctx.getState();
+    whitelistEnabledToggle.checked = state.whitelistEnabled;
     autoEnableToggle.checked = state.autoEnableOnWhitelist;
     autoEnableSettleInput.value = String(state.autoEnableSettleMs);
     rulesContainer.textContent = ''; // Clear existing rules
@@ -83,6 +85,14 @@ export function initWhitelistPanel(
       rulesContainer.appendChild(row);
     });
   }
+
+  // --- Enable Whitelist Mode Toggle ---
+  whitelistEnabledToggle.addEventListener('change', async (e) => {
+    const enabled = (e.target as HTMLInputElement).checked;
+    ctx.getState().whitelistEnabled = enabled;
+    await saveSettings({ whitelistEnabled: enabled });
+    ctx.notifyUpdate();
+  });
 
   // --- Auto-enable on Whitelist Toggle ---
   autoEnableToggle.addEventListener('change', async (e) => {

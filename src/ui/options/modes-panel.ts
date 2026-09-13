@@ -4,7 +4,8 @@
  * Renders built-in and custom mode cards with drag-and-drop reordering,
  * expand/collapse, effect chain editing, cloning, and import/export.
  */
-import { getEffectsForMode, saveSettings, synchronizeEffectsForCustomModes } from '@utils/settings';
+import { getEffectsForMode, getLocalSettings, saveSettings, synchronizeEffectsForCustomModes } from '@utils/settings';
+import { resolveEffectReference } from '@utils/effect-registry';
 import { AVAILABLE_EFFECTS } from '@utils/effects-map';
 import type { EnhancementMode, EnhancementEffect, CustomMode, PerformanceTier } from '@/types';
 import { renderParamSliders } from './param-sliders';
@@ -35,11 +36,51 @@ export function initModesPanel(
 ): { render(): void } {
 
   // -----------------------------------------------------------------------
+  //  "Fast mode — Preserve detail" policy cache
+  // -----------------------------------------------------------------------
+  // The local setting is read asynchronously, but render() rebuilds every card
+  // synchronously. Cache the latest value once here and reuse it for the whole
+  // pass (never await per effect). A changed value triggers one re-render.
+  let preserveDetail = true;
+  let policyFetchInFlight = false;
+
+  /** Resolve an effect and report whether it is a restore-category effect. */
+  function isRestoreEffect(effect: EnhancementEffect): boolean {
+    const resolution = resolveEffectReference(effect);
+    return (
+      resolution.status === 'resolved' &&
+      resolution.effect.descriptor.category === 'restore'
+    );
+  }
+
+  function refreshPreserveDetailPolicy(): void {
+    if (policyFetchInFlight) return;
+    policyFetchInFlight = true;
+    getLocalSettings()
+      .then((local) => {
+        const next = local.preserveDetail ?? true;
+        if (next !== preserveDetail) {
+          preserveDetail = next;
+          render();
+        }
+      })
+      .catch(() => {
+        // Keep the last known policy value if storage is unavailable.
+      })
+      .finally(() => {
+        policyFetchInFlight = false;
+      });
+  }
+
+  // -----------------------------------------------------------------------
   //  Main render function
   // -----------------------------------------------------------------------
   function render() {
     const settingsState = ctx.getState();
     const currentTier = ctx.getTier();
+
+    // Refresh the cached policy asynchronously for this/next pass.
+    refreshPreserveDetailPolicy();
 
     // 1. Preserve expanded state before re-rendering
     const expandedModeIds = new Set<string>();
@@ -212,9 +253,27 @@ export function initModesPanel(
       summary.textContent = summaryText || (t('noEffects', 'No effects'));
       card.appendChild(summary);
 
+      // Whether this chain contains any restore-category effect. Computed from
+      // the descriptors, not from runtime geometry (see note below).
+      const hasRestoreEffects = modeEffects.some(isRestoreEffect);
+
       // --- Card Content (shown when expanded) ---
       const cardContent = document.createElement('div');
       cardContent.className = 'mode-card-content';
+
+      // Policy note — not a computed prediction. Suppression depends on runtime
+      // geometry (source resolution, render target, upscale factors), so we
+      // describe the policy only. Applies to built-in and custom modes alike.
+      if (preserveDetail && hasRestoreEffects) {
+        const policyNote = document.createElement('p');
+        policyNote.className = 'mode-policy-note';
+        policyNote.textContent = t(
+          'preserveDetailModeNote',
+          'Trailing restore passes may be skipped by "Fast mode". Turning it off runs the full chain, which is not always higher quality.',
+        );
+        cardContent.appendChild(policyNote);
+      }
+
       const effectsList = document.createElement('ul');
       effectsList.className = 'effects-list';
 
@@ -227,7 +286,26 @@ export function initModesPanel(
         // --- Configurable parameters (e.g. CAS sharpness, DoG strength) ---
         const effectContent = document.createElement('div');
         effectContent.className = 'effect-content';
-        effectContent.appendChild(effectName);
+
+        const effectNameRow = document.createElement('div');
+        effectNameRow.className = 'effect-name-row';
+        effectNameRow.appendChild(effectName);
+
+        // Restore-category effects are subject to the "Fast mode"
+        // policy. This is a policy marker, not a claim that this effect will be
+        // skipped: whether suppression happens depends on runtime geometry.
+        if (isRestoreEffect(effect)) {
+          const policyBadge = document.createElement('span');
+          policyBadge.className = 'effect-policy-badge';
+          policyBadge.textContent = t('restorePolicyBadge', 'Restore');
+          policyBadge.title = t(
+            'restorePolicyBadgeTitle',
+            'Restore pass — may be skipped when "Fast mode" is on.',
+          );
+          effectNameRow.appendChild(policyBadge);
+        }
+
+        effectContent.appendChild(effectNameRow);
 
         if (effect.params && !mode.isBuiltIn) {
           const paramsWrapper = document.createElement('div');

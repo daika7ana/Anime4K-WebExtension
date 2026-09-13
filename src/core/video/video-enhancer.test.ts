@@ -23,6 +23,7 @@ const { mockOverlay, mockRenderer, mockDiagnosticsOverlay } = vi.hoisted(() => {
     hide: vi.fn(),
     update: vi.fn(),
     setInfo: vi.fn(),
+    setDetailMode: vi.fn(),
     destroy: vi.fn(),
   };
 
@@ -1163,11 +1164,11 @@ describe('VideoEnhancer', () => {
     });
   });
 
-  describe('preserveDetail / isBuiltInMode threading', () => {
+  describe('preserveDetail threading', () => {
     /**
-     * A built-in mode (isBuiltIn=true) paired with preserveDetail=false gives
-     * distinct values, so a swapped or dropped argument is caught. The custom
-     * mode case below covers the isBuiltIn=false path.
+     * A built-in mode paired with preserveDetail=false gives a distinct value,
+     * so a dropped argument is caught. The custom mode case below confirms the
+     * policy also reaches custom chains.
      */
     const BUILT_IN_MODE_SETTINGS = {
       selectedModeId: 'builtin-mode-a',
@@ -1179,7 +1180,7 @@ describe('VideoEnhancer', () => {
       enableCrossOriginFix: false,
     };
 
-    it('forwards preserveDetail=false and isBuiltInMode=true to Renderer.create', async () => {
+    it('forwards preserveDetail=false to Renderer.create', async () => {
       (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
         showDiagnostics: false,
         preserveDetail: false,
@@ -1191,11 +1192,10 @@ describe('VideoEnhancer', () => {
 
       const createCall = (Renderer.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
       expect(createCall.preserveDetail).toBe(false);
-      expect(createCall.isBuiltInMode).toBe(true);
       enhancer.destroy();
     });
 
-    it('forwards preserveDetail=false and isBuiltInMode=true to updateConfiguration', async () => {
+    it('forwards preserveDetail=false to updateConfiguration', async () => {
       const enhancer = VideoEnhancer.create(video);
       await enhancer.toggleEnhancement();
 
@@ -1224,11 +1224,10 @@ describe('VideoEnhancer', () => {
 
       const updateCall = (mockRenderer.updateConfiguration as ReturnType<typeof vi.fn>).mock.calls.at(-1)!;
       expect(updateCall[0].preserveDetail).toBe(false);
-      expect(updateCall[0].isBuiltInMode).toBe(true);
       enhancer.destroy();
     });
 
-    it('forwards the custom-mode flag (isBuiltInMode=false) to Renderer.create', async () => {
+    it('forwards preserveDetail to Renderer.create for a custom mode', async () => {
       (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
         showDiagnostics: false,
         preserveDetail: true,
@@ -1247,9 +1246,8 @@ describe('VideoEnhancer', () => {
       await enhancer.toggleEnhancement();
 
       const createCall = (Renderer.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      // Distinct values (default preserveDetail=true) so a swap is caught.
+      // The policy reaches custom chains too.
       expect(createCall.preserveDetail).toBe(true);
-      expect(createCall.isBuiltInMode).toBe(false);
       enhancer.destroy();
     });
   });

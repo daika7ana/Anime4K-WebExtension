@@ -180,7 +180,6 @@ describe('Renderer', () => {
       onProgress: overrides.onProgress as ((stage: string | null, current?: number, total?: number) => void) | undefined,
       enableGpuTimings: overrides.enableGpuTimings as boolean | undefined,
       preserveDetail: overrides.preserveDetail as boolean | undefined,
-      isBuiltInMode: overrides.isBuiltInMode as boolean | undefined,
     });
     await Promise.resolve();
     return r;

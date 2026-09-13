@@ -41,7 +41,10 @@
     "description": "Error message for rendering failure"
   },
   "whitelistEnable": {
-    "message": "Enable Whitelist"
+    "message": "Enable Whitelist Mode"
+  },
+  "whitelistEnableDesc": {
+    "message": "When enabled, only sites and pages on the whitelist are enhanced."
   },
   "addCurrentPage": {
     "message": "Page"
@@ -245,6 +248,21 @@
   },
   "customModes": {
     "message": "Custom Modes"
+  },
+  "restorePolicyBadge": {
+    "message": "Restore"
+  },
+  "restorePolicyBadgeTitle": {
+    "message": "Restore pass — may be skipped when \"Fast mode\" is on."
+  },
+  "preserveDetailLabel": {
+    "message": "Fast mode — Preserve detail"
+  },
+  "preserveDetailDesc": {
+    "message": "Skips the trailing target-resolution restore passes for a large speedup. Applies to all modes, including custom ones. Off is not always higher quality — on many videos these passes change little, and some clips look as good or better without them."
+  },
+  "preserveDetailModeNote": {
+    "message": "Trailing restore passes may be skipped by \"Fast mode\". Turning it off runs the full chain, which is not always higher quality."
   },
   "modeDescA": {
     "message": "For most 1080p anime, older 720p, and blurry or heavily compressed SD."
@@ -511,5 +529,77 @@
   },
   "diagnostics": {
     "message": "Diagnostics"
+  },
+  "diagnosticsMode": {
+    "message": "Mode"
+  },
+  "diagnosticsTier": {
+    "message": "Tier"
+  },
+  "diagnosticsInputResolution": {
+    "message": "Input"
+  },
+  "diagnosticsTargetResolution": {
+    "message": "Target"
+  },
+  "diagnosticsCustomMode": {
+    "message": "Custom"
+  },
+  "diagnosticsFrameLabel": {
+    "message": "Frame"
+  },
+  "diagnosticsCpu": {
+    "message": "CPU"
+  },
+  "diagnosticsGpuShare": {
+    "message": "GPU"
+  },
+  "diagnosticsGpuTimings": {
+    "message": "GPU Timings"
+  },
+  "diagnosticsGpuTimingsUnavailable": {
+    "message": "GPU timings unavailable"
+  },
+  "diagnosticsTimingPass": {
+    "message": "Pass"
+  },
+  "diagnosticsTimingCpuP50": {
+    "message": "CPU p50"
+  },
+  "diagnosticsTimingCpuP95": {
+    "message": "CPU p95"
+  },
+  "diagnosticsTimingGpuP50": {
+    "message": "GPU p50"
+  },
+  "diagnosticsTimingGpuP95": {
+    "message": "GPU p95"
+  },
+  "diagnosticsTimingGpuP99": {
+    "message": "GPU p99"
+  },
+  "diagnosticsTimingTotal": {
+    "message": "Total GPU"
+  },
+  "diagnosticsFramesSampled": {
+    "message": "Frames sampled"
+  },
+  "diagnosticsCpuTimingLimited": {
+    "message": "CPU timings limited to 0.1 ms"
+  },
+  "diagnosticsDetail": {
+    "message": "Detail level"
+  },
+  "diagnosticsDetailDesc": {
+    "message": "Choose how much detail the diagnostics overlay shows."
+  },
+  "diagnosticsDetailAuto": {
+    "message": "Auto (compact on small videos)"
+  },
+  "diagnosticsDetailCompact": {
+    "message": "Compact"
+  },
+  "diagnosticsDetailExpanded": {
+    "message": "Expanded"
   }
 }
