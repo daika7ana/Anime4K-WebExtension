@@ -59,6 +59,7 @@ const DEFAULT_SYNCED_SETTINGS: SyncedSettings = {
   customModes: [],
   enableCrossOriginFix: false,
   autoEnableOnWhitelist: false,
+  autoEnableSettleMs: 300,
   enableHotkey: true,
   colorGrading: { ...DEFAULT_COLOR_GRADING },
 };
@@ -145,6 +146,15 @@ function coercePerformanceTier(value: unknown, fallback: PerformanceTier): Perfo
   return fallback;
 }
 
+function coerceAutoEnableSettleMs(value: unknown, fallback: number): number {
+  if (value === undefined) return fallback;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.round(Math.min(Math.max(value, 0), 10000));
+  }
+  warnInvalidSetting('autoEnableSettleMs', value);
+  return fallback;
+}
+
 /**
  * Normalize untrusted synced settings read from storage, falling back to
  * defaults for any field that is missing, the wrong type, or out of range.
@@ -176,6 +186,10 @@ export function normalizeSyncedSettings(data: Record<string, unknown>): SyncedSe
       'autoEnableOnWhitelist',
       data.autoEnableOnWhitelist,
       DEFAULT_SYNCED_SETTINGS.autoEnableOnWhitelist,
+    ),
+    autoEnableSettleMs: coerceAutoEnableSettleMs(
+      data.autoEnableSettleMs,
+      DEFAULT_SYNCED_SETTINGS.autoEnableSettleMs,
     ),
     enableHotkey: coerceBoolean(
       'enableHotkey',
@@ -240,6 +254,7 @@ async function getSyncedSettings(): Promise<SyncedSettings> {
       'customModes',
       'enableCrossOriginFix',
       'autoEnableOnWhitelist',
+      'autoEnableSettleMs',
       'enableHotkey',
       'colorGrading',
     ], (data) => {
@@ -352,6 +367,7 @@ export async function saveSettings(settings: Partial<Anime4KWebExtSettings>): Pr
     'customModes',
     'enableCrossOriginFix',
     'autoEnableOnWhitelist',
+    'autoEnableSettleMs',
     'enableHotkey',
     'colorGrading',
   ];

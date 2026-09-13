@@ -5,11 +5,21 @@ import { Renderer } from '@core/renderer';
 import { ANIME4K_APPLIED_ATTR } from '@/constants';
 import { Dimensions, Anime4KWebExtSettings, EnhancementMode, EnhancementEffect, ColorGradingSettings } from '@/types';
 import { OverlayManager } from '@core/ui/overlay-manager';
-import { DiagnosticsOverlay } from '@core/ui/diagnostics-overlay';
+import { DiagnosticsOverlay, type DiagnosticsInfo } from '@core/ui/diagnostics-overlay';
 import { yieldToAnimationFrame } from '@core/utils/yield-utils';
 
 /** Debounce delay before reacting to monitor size / DPR changes. */
 const DISPLAY_RESIZE_DEBOUNCE_MS = 200;
+
+/** Built-in modes are Anime4K presets; custom modes report simply as "Custom". */
+function getDiagnosticsModeLabel(mode: EnhancementMode): string {
+  return mode.isBuiltIn ? mode.name : t('diagnosticsCustomMode', 'Custom');
+}
+
+/** Format a resolution pair for the diagnostics HUD; em dash when unknown. */
+function formatResolution(width: number, height: number): string {
+  return width > 0 && height > 0 ? `${width}×${height}` : '--';
+}
 
 /**
  * Video enhancer class that encapsulates Anime4K processing logic.
@@ -39,9 +49,20 @@ export class VideoEnhancer {
     this.scheduleDisplayResize();
   };
 
+  /**
+   * Refreshes the HUD's input-resolution row when the current video's metadata
+   * changes. Never reconfigures the renderer — display only.
+   */
+  private readonly onVideoMetadataLoaded = (): void => {
+    this.diagnosticsOverlay?.setInfo({
+      inputResolution: formatResolution(this.video.videoWidth, this.video.videoHeight),
+    });
+  };
+
   private constructor(private video: HTMLVideoElement) {
     this.overlay = OverlayManager.create(this.video);
     this.button = this.overlay.getButton();
+    this.video.addEventListener('loadedmetadata', this.onVideoMetadataLoaded);
     this.initUI();
   }
 
@@ -65,6 +86,8 @@ export class VideoEnhancer {
 
   private fixAttempted = false;
   private initializing = false;
+  /** Terminal lifecycle flag: once destroyed, the enhancer never acts again. */
+  private destroyed = false;
 
   /**
    * Checks and fixes cross-origin issues with the video.
@@ -115,6 +138,8 @@ export class VideoEnhancer {
    * Toggles the video enhancement on/off
    */
   async toggleEnhancement(): Promise<void> {
+    if (this.destroyed) return;
+
     if (this.renderer) {
       console.log('[Anime4KWebExt] Disabling video enhancement.');
       this.disableEnhancement();
@@ -131,8 +156,16 @@ export class VideoEnhancer {
     // Defer heavy initialization to the next animation frame so the browser can
     // repaint the "Enhancing..." button text before any blocking GPU work begins.
     await yieldToAnimationFrame();
+    if (this.destroyed) {
+      this.initializing = false;
+      return;
+    }
 
     const settings = await getSettings();
+    if (this.destroyed) {
+      this.initializing = false;
+      return;
+    }
 
     try {
       if (settings.enableCrossOriginFix) {
@@ -153,10 +186,15 @@ export class VideoEnhancer {
 
       // --- Core operation ---
       await this.initRenderer();
+      if (this.destroyed) {
+        this.initializing = false;
+        return;
+      }
       this.video.setAttribute(ANIME4K_APPLIED_ATTR, 'true');
       this.button.innerText = t('cancelEnhance');
 
     } catch (error) {
+      if (this.destroyed) return;
       const err = error as Error;
       const isCrossOriginError = err.name === 'SecurityError' && err.message.includes('tainted');
 
@@ -166,9 +204,11 @@ export class VideoEnhancer {
         try {
           await this.fixCrossOrigin();
           await this.initRenderer(); // Retry
+          if (this.destroyed) return;
           this.video.setAttribute(ANIME4K_APPLIED_ATTR, 'true');
           this.button.innerText = t('cancelEnhance');
         } catch (retryError) {
+          if (this.destroyed) return;
           console.error('[Anime4KWebExt] Enhancer failed even after retry:', retryError);
           this.disableEnhancement();
           this.showErrorModal((retryError as Error).message || t('enhanceError'));
@@ -195,6 +235,8 @@ export class VideoEnhancer {
    * Initializes the renderer, including loading settings, loading modules, and creating the Renderer instance
    */
   private async initRenderer(): Promise<void> {
+    if (this.destroyed) return;
+
     // Detect DRM-protected content early (EME sets mediaKeys on the video element)
     if (this.video.mediaKeys) {
       throw new Error('DRM detected. Video enhancement is not supported for DRM-protected content.');
@@ -207,6 +249,8 @@ export class VideoEnhancer {
         this.video.addEventListener('loadedmetadata', resolve, { once: true });
       });
     }
+
+    if (this.destroyed) return;
 
     if (!navigator.gpu) {
       throw new Error('WebGPU is not supported on this browser.');
@@ -242,14 +286,21 @@ export class VideoEnhancer {
 
     // Create diagnostics overlay if enabled in local settings
     const localSettings = await getLocalSettings();
+    if (this.destroyed) return;
     const showDiagnostics = localSettings.showDiagnostics;
     if (showDiagnostics) {
       const adapterInfo = await this.getAdapterInfo();
-      this.diagnosticsOverlay = DiagnosticsOverlay.create(this.video, adapterInfo);
+      const diagnosticsInfo: DiagnosticsInfo = {
+        mode: getDiagnosticsModeLabel(selectedMode),
+        performanceTier: settings.performanceTier,
+        inputResolution: formatResolution(this.video.videoWidth, this.video.videoHeight),
+        targetResolution: formatResolution(targetDimensions.width, targetDimensions.height),
+      };
+      this.diagnosticsOverlay = DiagnosticsOverlay.create(this.video, adapterInfo, diagnosticsInfo);
       this.diagnosticsOverlay.show();
     }
 
-    this.renderer = await Renderer.create({
+    const renderer = await Renderer.create({
       video: this.video,
       canvas: canvas,
       effects: effects,
@@ -263,10 +314,16 @@ export class VideoEnhancer {
       preserveDetail: localSettings.preserveDetail ?? true,
       isBuiltInMode: selectedMode.isBuiltIn,
       onError: async (error: Error) => {
+        // A destroyed enhancer has no live UI/resources; never surface errors or
+        // re-run teardown for it (e.g. a frame failing after the element was removed).
+        if (this.destroyed) return;
         console.error('[Anime4KWebExt] Renderer runtime error:', error);
         const isCrossOriginError = error.name === 'SecurityError' && error.message.includes('tainted');
         const isDrmError = error.message.includes('DRM') || error.message.includes('copy protection');
         const settings = await getSettings();
+
+        // State can change across the await (the element may be removed meanwhile).
+        if (this.destroyed) return;
 
         if (isDrmError) {
           this.showErrorModal('This video uses DRM copy protection. Video enhancement is not supported for DRM-protected content.');
@@ -295,9 +352,17 @@ export class VideoEnhancer {
       },
     });
 
+    if (this.destroyed) {
+      renderer.destroy();
+      return;
+    }
+    this.renderer = renderer;
+
     // Track the active resolution setting and attach monitor/DPR listeners when
     // the target follows the monitor display size.
-    this.updateDisplayResizeListeners(targetResolutionSetting);
+    if (!this.destroyed) {
+      this.updateDisplayResizeListeners(targetResolutionSetting);
+    }
 
     console.log(`[Anime4KWebExt] Renderer initialized with mode: ${selectedMode.name}`);
   }
@@ -357,12 +422,23 @@ export class VideoEnhancer {
     // Update the diagnostics fallback count
     this.currentPipelineCount = effects.length;
 
+    const diagnosticsInfo: DiagnosticsInfo = {
+      mode: getDiagnosticsModeLabel(selectedMode),
+      performanceTier: newSettings.performanceTier,
+      inputResolution: formatResolution(this.video.videoWidth, this.video.videoHeight),
+      targetResolution: formatResolution(newTargetDimensions.width, newTargetDimensions.height),
+    };
+
     // Handle diagnostics overlay toggle (localSettings read above)
-    if (localSettings.showDiagnostics && !this.diagnosticsOverlay) {
-      const adapterInfo = await this.getAdapterInfo();
-      this.diagnosticsOverlay = DiagnosticsOverlay.create(this.video, adapterInfo);
-      this.diagnosticsOverlay.show();
-    } else if (!localSettings.showDiagnostics && this.diagnosticsOverlay) {
+    if (localSettings.showDiagnostics) {
+      if (!this.diagnosticsOverlay) {
+        const adapterInfo = await this.getAdapterInfo();
+        this.diagnosticsOverlay = DiagnosticsOverlay.create(this.video, adapterInfo, diagnosticsInfo);
+        this.diagnosticsOverlay.show();
+      } else {
+        this.diagnosticsOverlay.setInfo(diagnosticsInfo);
+      }
+    } else if (this.diagnosticsOverlay) {
       this.diagnosticsOverlay.destroy();
       this.diagnosticsOverlay = null;
     }
@@ -644,8 +720,11 @@ export class VideoEnhancer {
    * Reattach method
    */
   public async reattach(newVideo: HTMLVideoElement): Promise<void> {
+    if (this.destroyed) return;
     console.log('[Anime4KWebExt] Re-attaching enhancer to new video.');
+    this.video.removeEventListener('loadedmetadata', this.onVideoMetadataLoaded);
     this.video = newVideo;
+    this.video.addEventListener('loadedmetadata', this.onVideoMetadataLoaded);
     this.overlay.reattach(newVideo);
 
     // The monitor/DPR listeners are independent of the video element, so there
@@ -665,8 +744,11 @@ export class VideoEnhancer {
    * Destroys the entire enhancer instance (including UI elements and internal resources)
    */
   public destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
     console.log('[Anime4KWebExt] Destroying enhancer instance:', this);
     this.disableEnhancement();
+    this.video.removeEventListener('loadedmetadata', this.onVideoMetadataLoaded);
     this.overlay.destroy();
     console.log('[Anime4KWebExt] Enhancer destroyed')
   }

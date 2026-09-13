@@ -134,6 +134,7 @@ interface SyncedSettings {
   customModes: CustomMode[];
   enableCrossOriginFix: boolean;
   autoEnableOnWhitelist: boolean;
+  autoEnableSettleMs: number;
   enableHotkey: boolean;
   colorGrading: ColorGradingSettings;
 }

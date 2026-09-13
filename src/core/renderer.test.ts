@@ -456,6 +456,115 @@ describe('Renderer', () => {
     });
   });
 
+  describe('updateVideoSource()', () => {
+    it('cancels the pending callback on the old video and arms one on the new video', async () => {
+      const r = await createRenderer();
+      const oldRvfc = video.requestVideoFrameCallback as ReturnType<typeof vi.fn>;
+      const oldCvfc = video.cancelVideoFrameCallback as ReturnType<typeof vi.fn>;
+      // Ensure the render loop has armed a pending callback on the old element.
+      await vi.waitFor(() => expect(oldRvfc).toHaveBeenCalled());
+
+      const videoB = createMockVideo();
+      const newRvfc = videoB.requestVideoFrameCallback as ReturnType<typeof vi.fn>;
+      oldCvfc.mockClear();
+
+      await r.updateVideoSource(videoB);
+
+      expect(oldCvfc).toHaveBeenCalled();
+      await vi.waitFor(() => expect(newRvfc).toHaveBeenCalled());
+      r.destroy();
+    });
+
+    it('is a no-op when the new source is the same video element', async () => {
+      const r = await createRenderer();
+      const oldRvfc = video.requestVideoFrameCallback as ReturnType<typeof vi.fn>;
+      const oldCvfc = video.cancelVideoFrameCallback as ReturnType<typeof vi.fn>;
+      await vi.waitFor(() => expect(oldRvfc).toHaveBeenCalled());
+
+      oldRvfc.mockClear();
+      oldCvfc.mockClear();
+
+      await r.updateVideoSource(video);
+
+      expect(oldCvfc).not.toHaveBeenCalled();
+      expect(oldRvfc).not.toHaveBeenCalled();
+      r.destroy();
+    });
+
+    it('does not re-arm a second loop while a frame is in flight', async () => {
+      const r = await createRenderer();
+      const oldRvfc = video.requestVideoFrameCallback as ReturnType<typeof vi.fn>;
+      const oldCvfc = video.cancelVideoFrameCallback as ReturnType<typeof vi.fn>;
+      await vi.waitFor(() => expect(oldRvfc).toHaveBeenCalled());
+
+      const renderLoop = oldRvfc.mock.calls.at(-1)![0] as () => Promise<void>;
+      oldRvfc.mockClear();
+      oldCvfc.mockClear();
+
+      const videoB = createMockVideo();
+      const newRvfc = videoB.requestVideoFrameCallback as ReturnType<typeof vi.fn>;
+
+      // Start a frame without awaiting it so frameInFlight stays true while
+      // updateVideoSource runs.
+      void renderLoop();
+
+      await r.updateVideoSource(videoB);
+
+      // Only the in-flight loop reschedules on the new element; the source
+      // switch must not start a parallel loop.
+      await vi.waitFor(() => expect(newRvfc).toHaveBeenCalled());
+      expect(oldCvfc).not.toHaveBeenCalled();
+      expect(newRvfc).toHaveBeenCalledTimes(1);
+      r.destroy();
+    });
+
+    it('fires onFirstFrameRendered again after switching to a new element', async () => {
+      const onFirstFrameRendered = vi.fn();
+      const r = await createRenderer({ onFirstFrameRendered });
+      await vi.waitFor(() => expect(onFirstFrameRendered).toHaveBeenCalledTimes(1));
+
+      onFirstFrameRendered.mockClear();
+      const videoB = createMockVideo();
+
+      await r.updateVideoSource(videoB);
+
+      await vi.waitFor(() => expect(onFirstFrameRendered).toHaveBeenCalledTimes(1));
+      r.destroy();
+    });
+  });
+
+  describe('destroy while a frame is in flight', () => {
+    it('does not call onError or log a frame failure when destroyed mid-frame', async () => {
+      // A pipeline pass that never resolves until the test releases it, so the
+      // first frame is guaranteed to still be in flight when destroy() runs.
+      let rejectPass!: (error: unknown) => void;
+      const hangingPass = new Promise<void>((_resolve, reject) => {
+        rejectPass = reject;
+      });
+      const pipeline = createMockPipeline();
+      pipeline.pass.mockReturnValue(hangingPass);
+      mockBuildEffectPipelines.mockResolvedValue([pipeline]);
+
+      const onError = vi.fn();
+      const errorSpy = vi.spyOn(console, 'error');
+      const r = await createRenderer({ onError });
+
+      // Tear down while processFrame() is awaiting the pipeline pass.
+      r.destroy();
+
+      // The in-flight frame now fails; the teardown artifact must be swallowed.
+      rejectPass(new Error('context is not configured'));
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+
+      expect(onError).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalledWith(
+        '[Anime4KWebExt] Frame processing failed:',
+        expect.anything(),
+      );
+      errorSpy.mockRestore();
+    });
+  });
+
   describe('visibility pause', () => {
     beforeEach(() => {
       // Ensure visibilityState starts as 'visible' before each test

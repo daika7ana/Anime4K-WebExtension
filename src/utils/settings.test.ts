@@ -351,6 +351,32 @@ describe('normalizeSyncedSettings', () => {
     expect(result.targetResolutionSetting).toBe('x2');
     expect(result.customModes).toEqual([]);
   });
+
+  it('rounds a valid autoEnableSettleMs number', () => {
+    expect(normalizeSyncedSettings({ autoEnableSettleMs: 123.6 }).autoEnableSettleMs).toBe(124);
+  });
+
+  it('clamps a negative autoEnableSettleMs to 0', () => {
+    expect(normalizeSyncedSettings({ autoEnableSettleMs: -5 }).autoEnableSettleMs).toBe(0);
+  });
+
+  it('clamps an out-of-range autoEnableSettleMs to 10000', () => {
+    expect(normalizeSyncedSettings({ autoEnableSettleMs: 99999 }).autoEnableSettleMs).toBe(10000);
+  });
+
+  it('falls back to 300 for a non-number autoEnableSettleMs and warns', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(normalizeSyncedSettings({ autoEnableSettleMs: 'abc' }).autoEnableSettleMs).toBe(300);
+    expect(normalizeSyncedSettings({ autoEnableSettleMs: Number.NaN }).autoEnableSettleMs).toBe(300);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('autoEnableSettleMs'),
+    );
+  });
+
+  it('falls back to 300 when autoEnableSettleMs is missing', () => {
+    expect(normalizeSyncedSettings({}).autoEnableSettleMs).toBe(300);
+  });
 });
 
 describe('normalizeLocalSettings', () => {

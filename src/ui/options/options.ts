@@ -28,6 +28,7 @@ const importBtn = document.getElementById('import-btn') as HTMLButtonElement;
 const exportBtn = document.getElementById('export-btn') as HTMLButtonElement;
 const crossOriginFixToggle = document.getElementById('cross-origin-fix-toggle') as HTMLInputElement;
 const autoEnableToggle = document.getElementById('auto-enable-toggle') as HTMLInputElement;
+const autoEnableSettleInput = document.getElementById('auto-enable-settle-ms') as HTMLInputElement;
 const colorGradingToggle = document.getElementById('color-grading-toggle') as HTMLInputElement;
 const colorGradingSliders = document.getElementById('color-grading-sliders') as HTMLElement;
 const themeSelect = document.getElementById('theme-select') as HTMLSelectElement;
@@ -76,7 +77,7 @@ const setupInternationalization = () => {
 
 // --- Initialize panels (bind DOM + events; returns render handles) ---
 const modesPanel = initModesPanel(ctx, modesContainer, addModeBtn, exportModesBtn, importModesBtn);
-const whitelistPanel = initWhitelistPanel(ctx, rulesContainer, addRuleBtn, exportBtn, importBtn, autoEnableToggle);
+const whitelistPanel = initWhitelistPanel(ctx, rulesContainer, addRuleBtn, exportBtn, importBtn, autoEnableToggle, autoEnableSettleInput);
 
 // onTierChanged is called when the tier changes (manual select or benchmark apply).
 // It syncs the tier-select display AND re-renders mode chains (which depend on tier).

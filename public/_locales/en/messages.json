@@ -52,6 +52,12 @@
   "addParentPath": {
     "message": "Path"
   },
+  "removeFromWhitelist": {
+    "message": "Remove from Whitelist"
+  },
+  "removedFromWhitelist": {
+    "message": "Removed from whitelist"
+  },
   "openSettings": {
     "message": "Settings"
   },
@@ -469,6 +475,12 @@
   },
   "autoEnableOnWhitelistDesc": {
     "message": "Automatically enhance videos on whitelisted sites without clicking the Enhance button."
+  },
+  "autoEnableSettleMs": {
+    "message": "Auto-enable Delay (ms)"
+  },
+  "autoEnableSettleMsDesc": {
+    "message": "Milliseconds to wait before auto-enabling a video, so transient players are skipped. Set to 0 to disable the delay."
   },
   "showDiagnostics": {
     "message": "Show Diagnostics"

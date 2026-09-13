@@ -527,6 +527,11 @@ export class Renderer {
       return true; // Successfully rendered
 
     } catch (error) {
+      // The renderer was destroyed while this frame was in flight (e.g. the
+      // video element was replaced during initialization). Swallow the error:
+      // it is an artifact of teardown, not a real rendering failure.
+      if (this.destroyed) return false;
+
       // Release any ring slot claimed between beginFrame() and endFrame() so an
       // aborted frame can never leak the profiler's readback ring.
       this.profiler?.abortFrame();
@@ -570,7 +575,13 @@ export class Renderer {
   private renderFirstFrameAndStartLoop = async (): Promise<void> => {
     if (this.destroyed) return;
 
-    if (await this.processFrame()) {
+    const rendered = await this.processFrame();
+    // The renderer may have been destroyed while the frame was in flight (e.g.
+    // the video element was replaced during initialization). Never surface
+    // callbacks or errors, or schedule further work, after teardown.
+    if (this.destroyed) return;
+
+    if (rendered) {
       // First frame rendered successfully
       this.onFirstFrameRendered?.();
       this.fixAttempted = false;
@@ -617,7 +628,12 @@ export class Renderer {
 
     this.frameInFlight = true;
     try {
-      if (await this.processFrame()) {
+      const rendered = await this.processFrame();
+      // If the renderer was destroyed mid-frame, stop without surfacing errors
+      // or scheduling another callback. The finally block still resets the guard.
+      if (this.destroyed) return;
+
+      if (rendered) {
         // Frame rendered successfully
         this.fixAttempted = false;
         this.lastError = null;
@@ -726,12 +742,32 @@ export class Renderer {
    * @param newVideo - The new HTMLVideoElement
    */
   public async updateVideoSource(newVideo: HTMLVideoElement): Promise<void> {
+    if (this.destroyed || this.video === newVideo) return;
+
     console.log('[Anime4KWebExt] Renderer video source updated.');
+
+    // A pending requestVideoFrameCallback is bound to the OLD element's
+    // presentation clock. If one is pending (and not currently executing),
+    // cancel it on that element before switching, otherwise the loop would
+    // stall when the old element stops presenting frames.
+    const hadPendingCallback = this.animationFrameId !== null && !this.frameInFlight;
+    if (hadPendingCallback && this.animationFrameId !== null) {
+      this.video.cancelVideoFrameCallback(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+
     // Update the video reference first to ensure subsequent resize operations use the correct video element
     this.video = newVideo;
     if (newVideo.videoWidth !== this.videoFrameTexture.width || newVideo.videoHeight !== this.videoFrameTexture.height) {
       console.log('[Anime4KWebExt] Video dimensions changed on reattach. Updating renderer.');
       await this.handleSourceResize();
+    }
+
+    // Re-arm the loop on the new element after cancelling the old callback. If a
+    // frame was in flight, the running loop reschedules against the updated
+    // this.video, so a second loop must not be started.
+    if (hadPendingCallback && !this.destroyed && !this.isRecovering) {
+      this.renderFirstFrameAndStartLoop();
     }
   }
 

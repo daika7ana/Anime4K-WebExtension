@@ -311,9 +311,6 @@
           </div>
         </div>
         <div class="card">
-          <div class="card-header">
-            <h2 class="card-title" data-i18n="autoEnableOnWhitelist">Auto-enable on Whitelisted Sites</h2>
-          </div>
           <div class="setting-item">
             <div class="setting-label">
               <label for="auto-enable-toggle" data-i18n="autoEnableOnWhitelist">Auto-enable on Whitelisted Sites</label>
@@ -324,6 +321,15 @@
                 <input type="checkbox" id="auto-enable-toggle">
                 <span class="slider round"></span>
               </label>
+            </div>
+          </div>
+          <div class="setting-item">
+            <div class="setting-label">
+              <label for="auto-enable-settle-ms" data-i18n="autoEnableSettleMs">Auto-enable Delay (ms)</label>
+              <p class="setting-description" data-i18n="autoEnableSettleMsDesc">Milliseconds to wait before auto-enabling a video, so transient players are skipped. Set to 0 to disable the delay.</p>
+            </div>
+            <div class="setting-control">
+              <input type="number" id="auto-enable-settle-ms" min="0" max="10000" step="50" value="300">
             </div>
           </div>
         </div>

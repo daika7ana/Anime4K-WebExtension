@@ -22,6 +22,7 @@ const { mockOverlay, mockRenderer, mockDiagnosticsOverlay } = vi.hoisted(() => {
     show: vi.fn(),
     hide: vi.fn(),
     update: vi.fn(),
+    setInfo: vi.fn(),
     destroy: vi.fn(),
   };
 
@@ -71,6 +72,11 @@ vi.mock('@/constants', () => ({
 vi.mock('@core/utils/yield-utils', () => ({
   yieldToAnimationFrame: vi.fn().mockResolvedValue(undefined),
   yieldToMain: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Surface English fallbacks so diagnostics labels/custom-mode strings are assertable.
+vi.mock('@utils/i18n', () => ({
+  t: vi.fn((_key: string, fallback?: string) => fallback ?? _key),
 }));
 
 import { VideoEnhancer } from './video-enhancer';
@@ -274,6 +280,57 @@ describe('VideoEnhancer', () => {
     });
   });
 
+  describe('terminal lifecycle', () => {
+    it('toggleEnhancement() after destroy() does not create a renderer', async () => {
+      const enhancer = VideoEnhancer.create(video);
+      enhancer.destroy();
+      (Renderer.create as ReturnType<typeof vi.fn>).mockClear();
+
+      await enhancer.toggleEnhancement();
+
+      expect(Renderer.create).not.toHaveBeenCalled();
+    });
+
+    it('destroy() during an in-flight init destroys the late-created renderer', async () => {
+      let resolveCreate!: (value: typeof mockRenderer) => void;
+      const deferred = new Promise<typeof mockRenderer>((resolve) => {
+        resolveCreate = resolve;
+      });
+      let markCreateCalled!: () => void;
+      const createCalled = new Promise<void>((resolve) => {
+        markCreateCalled = resolve;
+      });
+      (Renderer.create as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        markCreateCalled();
+        return deferred;
+      });
+
+      const enhancer = VideoEnhancer.create(video);
+      const toggle = enhancer.toggleEnhancement();
+
+      await createCalled;
+      enhancer.destroy();
+      resolveCreate(mockRenderer);
+      await toggle;
+
+      expect(mockRenderer.destroy).toHaveBeenCalled();
+      expect(video.hasAttribute('data-anime4k-applied')).toBe(false);
+    });
+
+    it('reattach() after destroy() is a no-op', async () => {
+      const enhancer = VideoEnhancer.create(video);
+      enhancer.destroy();
+
+      const newVideo = document.createElement('video');
+      document.body.appendChild(newVideo);
+
+      await enhancer.reattach(newVideo);
+
+      expect(mockOverlay.reattach).not.toHaveBeenCalled();
+      expect(enhancer.getVideoElement()).toBe(video);
+    });
+  });
+
   describe('updateSettings()', () => {
     it('updates renderer configuration when renderer exists', async () => {
       const enhancer = VideoEnhancer.create(video);
@@ -291,6 +348,7 @@ describe('VideoEnhancer', () => {
         whitelistEnabled: false,
         enableCrossOriginFix: false,
         autoEnableOnWhitelist: false,
+        autoEnableSettleMs: 300,
         enableHotkey: true,
         colorGrading: { enabled: false, brightness: 0, gamma: 1, contrast: 1, saturation: 1, vibrance: 0, exposure: 0 },
       };
@@ -698,6 +756,70 @@ describe('VideoEnhancer', () => {
       enhancer.destroy();
     });
 
+    it('passes the built-in mode name, tier and resolution to DiagnosticsOverlay.create', async () => {
+      Object.defineProperty(video, 'videoWidth', { value: 1920, configurable: true });
+      Object.defineProperty(video, 'videoHeight', { value: 1080, configurable: true });
+      (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        showDiagnostics: true,
+      });
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      const createCalls = (DiagnosticsOverlay.create as ReturnType<typeof vi.fn>).mock.calls;
+      const info = createCalls[createCalls.length - 1][2];
+      expect(info).toEqual({
+        mode: 'Mode A',
+        performanceTier: 'balanced',
+        inputResolution: '1920×1080',
+        targetResolution: '3840×2160',
+      });
+      enhancer.destroy();
+    });
+
+    it('refreshes the overlay info on updateSettings when the overlay already exists', async () => {
+      Object.defineProperty(video, 'videoWidth', { value: 1280, configurable: true });
+      Object.defineProperty(video, 'videoHeight', { value: 720, configurable: true });
+      (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        showDiagnostics: true,
+      });
+
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      expect(DiagnosticsOverlay.create).toHaveBeenCalled();
+      (DiagnosticsOverlay.create as ReturnType<typeof vi.fn>).mockClear();
+      mockDiagnosticsOverlay.setInfo.mockClear();
+
+      const customSettings = {
+        selectedModeId: 'custom-mode',
+        enhancementModes: [
+          { id: 'custom-mode', baseMode: 'A' as const, name: 'Custom Mode', isBuiltIn: false as const },
+        ],
+        targetResolutionSetting: '1080p',
+        performanceTier: 'ultra' as const,
+        customModes: [],
+        whitelist: [],
+        whitelistEnabled: false,
+        enableCrossOriginFix: false,
+        autoEnableOnWhitelist: false,
+        enableHotkey: false,
+        colorGrading: { enabled: false, brightness: 0, gamma: 1, contrast: 1, saturation: 1, vibrance: 0, exposure: 0 },
+      };
+
+      await enhancer.updateSettings(customSettings as any);
+
+      // The overlay already existed, so it is updated in place rather than recreated.
+      expect(DiagnosticsOverlay.create).not.toHaveBeenCalled();
+      expect(mockDiagnosticsOverlay.setInfo).toHaveBeenCalledWith({
+        mode: 'Custom',
+        performanceTier: 'ultra',
+        inputResolution: '1280×720',
+        targetResolution: '1920×1080',
+      });
+      enhancer.destroy();
+    });
+
     it('does not create diagnostics overlay when showDiagnostics is false', async () => {
       (getLocalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
         showDiagnostics: false,
@@ -834,6 +956,7 @@ describe('VideoEnhancer', () => {
         whitelistEnabled: false,
         enableCrossOriginFix: false,
         autoEnableOnWhitelist: false,
+        autoEnableSettleMs: 300,
         enableHotkey: false,
         colorGrading: { enabled: false, brightness: 0, gamma: 1, contrast: 1, saturation: 1, vibrance: 0, exposure: 0 },
       };
@@ -1256,6 +1379,47 @@ describe('VideoEnhancer', () => {
       );
 
       expect(document.body.textContent).toContain('DRM copy protection');
+
+      enhancer.destroy();
+    });
+  });
+
+  describe('renderer onError lifecycle guard', () => {
+    it('ignores renderer errors after the enhancer is destroyed', async () => {
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      const onError = (Renderer.create as ReturnType<typeof vi.fn>).mock.calls[0][0].onError;
+      expect(onError).toBeDefined();
+
+      // The element is removed and the enhancer torn down while a frame is in
+      // flight, so the renderer reports an error against a dead enhancer.
+      enhancer.destroy();
+
+      // Observe only activity that happens after destroy().
+      mockOverlay.hideCanvas.mockClear();
+      document.body.textContent = '';
+
+      await onError(new Error('InvalidStateError: getCurrentTexture: context is not configured'));
+
+      expect(document.body.textContent).not.toContain('A rendering error occurred.');
+      expect(document.body.textContent).not.toContain('Anime4K WebExtension');
+      // disableEnhancement() must not run a second time.
+      expect(mockOverlay.hideCanvas).not.toHaveBeenCalled();
+    });
+
+    it('still shows the generic render error for a live enhancer', async () => {
+      const enhancer = VideoEnhancer.create(video);
+      await enhancer.toggleEnhancement();
+
+      const onError = (Renderer.create as ReturnType<typeof vi.fn>).mock.calls[0][0].onError;
+      expect(onError).toBeDefined();
+
+      await onError(new Error('getCurrentTexture: context is not configured'));
+
+      expect(document.body.textContent).toContain('A rendering error occurred.');
+      // The live path still tears the enhancer down.
+      expect(mockOverlay.hideCanvas).toHaveBeenCalled();
 
       enhancer.destroy();
     });

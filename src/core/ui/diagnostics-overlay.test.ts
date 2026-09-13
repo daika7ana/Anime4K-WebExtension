@@ -112,6 +112,77 @@ describe('DiagnosticsOverlay', () => {
 
       overlay.destroy();
     });
+
+    it('renders the provided mode, tier and resolution values', () => {
+      const video = createTestVideo();
+      const overlay = DiagnosticsOverlay.create(video, 'Test GPU', {
+        mode: 'Mode A',
+        performanceTier: 'balanced',
+        inputResolution: '1920×1080',
+        targetResolution: '3840×2160',
+      });
+
+      const host = video.parentElement?.querySelector('div');
+      const textContent = host?.shadowRoot?.textContent ?? '';
+      expect(textContent).toContain('Mode');
+      expect(textContent).toContain('Mode A');
+      expect(textContent).toContain('Tier');
+      expect(textContent).toContain('balanced');
+      expect(textContent).toContain('Input');
+      expect(textContent).toContain('1920×1080');
+      expect(textContent).toContain('Target');
+      expect(textContent).toContain('3840×2160');
+
+      overlay.destroy();
+    });
+
+    it('shows placeholders when no info is provided', () => {
+      const video = createTestVideo();
+      const overlay = DiagnosticsOverlay.create(video, 'Test GPU');
+
+      const textContent = (video.parentElement?.querySelector('div')?.shadowRoot?.textContent) ?? '';
+      expect(textContent).toContain('--');
+
+      overlay.destroy();
+    });
+  });
+
+  describe('setInfo()', () => {
+    it('updates only the provided field, leaving unrelated values intact', () => {
+      const video = createTestVideo();
+      const overlay = DiagnosticsOverlay.create(video, 'Test GPU', {
+        mode: 'Mode A',
+        performanceTier: 'balanced',
+        inputResolution: '1920×1080',
+        targetResolution: '3840×2160',
+      });
+
+      overlay.setInfo({ inputResolution: '1280×720' });
+
+      const textContent = (video.parentElement?.querySelector('div')?.shadowRoot?.textContent) ?? '';
+      expect(textContent).toContain('1280×720');
+      expect(textContent).not.toContain('1920×1080');
+      // Unrelated values remain intact.
+      expect(textContent).toContain('Mode A');
+      expect(textContent).toContain('balanced');
+      expect(textContent).toContain('3840×2160');
+
+      overlay.destroy();
+    });
+
+    it('is safe to call after destroy()', () => {
+      const video = createTestVideo();
+      const overlay = DiagnosticsOverlay.create(video, 'Test GPU', {
+        mode: 'Mode A',
+        performanceTier: 'balanced',
+        inputResolution: '1920×1080',
+        targetResolution: '3840×2160',
+      });
+
+      overlay.destroy();
+
+      expect(() => overlay.setInfo({ inputResolution: '1280×720' })).not.toThrow();
+    });
   });
 
   describe('show() / hide()', () => {

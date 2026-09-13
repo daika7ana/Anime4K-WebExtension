@@ -471,6 +471,58 @@ h3 {
   transform: scale(1.2);
 }
 
+/* `[hidden]` must beat the author `display: flex` on the container, otherwise
+   the attribute is visually ignored. */
+.whitelist-buttons[hidden] {
+  display: none;
+}
+
+/* ===== Whitelist Remove Button =====
+   Replaces the three add buttons when the active page is already whitelisted.
+   Full-width block, neutral surface by default, error-accented on hover so it
+   reads as a removal action without competing with the primary CTA. */
+.whitelist-section .whitelist-remove-btn {
+  width: 100%;
+  margin-bottom: 0;
+  padding: 6px 8px;
+  min-height: 32px;
+  font-size: 12px;
+  background-color: var(--surface-container);
+  color: var(--on-surface-variant);
+  border: 1px solid var(--outline);
+  border-radius: var(--border-radius);
+  transition: all 0.2s cubic-bezier(0.2, 0.0, 0, 1.0);
+  white-space: nowrap;
+}
+
+.whitelist-section .whitelist-remove-btn::before {
+  content: '\2716'; /* ✖ removal affordance */
+  font-size: 11px;
+  line-height: 1;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.whitelist-section .whitelist-remove-btn:hover {
+  background-color: var(--danger);
+  border-color: var(--danger);
+  color: var(--surface);
+  box-shadow: 0 4px 12px rgba(243, 139, 168, 0.3);
+  transform: translateY(-1px);
+}
+
+.whitelist-section .whitelist-remove-btn:hover::before {
+  transform: scale(1.2);
+}
+
+.whitelist-section .whitelist-remove-btn:active {
+  transform: translateY(0);
+}
+
+/* Same `[hidden]` override, scoped so it wins over `.card button`'s display. */
+.whitelist-section .whitelist-remove-btn[hidden] {
+  display: none;
+}
+
 /* ===== Color Grading Section ===== */
 .color-grading-section {
   margin-top: var(--spacing-3);

@@ -1,6 +1,20 @@
-import { describe, it, expect } from 'vitest';
-import { validateRulePattern, isUrlWhitelisted } from './whitelist';
-import type { WhitelistRule } from '../types';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Mock the persistence + messaging seams so the removal helper can be tested
+// in isolation. Full-body `vi.fn()`s are returned inline (factories are hoisted)
+// and configured per-test via `vi.mocked(...)`.
+vi.mock('./settings', () => ({
+  getSettings: vi.fn(),
+  saveSettings: vi.fn(),
+}));
+vi.mock('./messaging', () => ({
+  sendMessage: vi.fn(),
+}));
+
+import { validateRulePattern, isUrlWhitelisted, getMatchingWhitelistRules, removeWhitelistRules } from './whitelist';
+import { getSettings, saveSettings } from './settings';
+import { sendMessage } from './messaging';
+import type { WhitelistRule, Anime4KWebExtSettings } from '../types';
 
 describe('validateRulePattern', () => {
   it('returns true for a valid non-empty pattern', () => {
@@ -105,5 +119,91 @@ describe('isUrlWhitelisted', () => {
     // Parentheses in pattern get escaped; URL spaces get percent-encoded
     const rules = makeRules('example.com/path%20(test)/*');
     expect(isUrlWhitelisted('https://example.com/path%20(test)/foo', rules)).toBe(true);
+  });
+});
+
+describe('getMatchingWhitelistRules', () => {
+  const makeRules = (...patterns: string[]): WhitelistRule[] =>
+    patterns.map(p => ({ pattern: p, enabled: true }));
+
+  it('returns every matching enabled rule', () => {
+    const rules = makeRules('youtube.com/*', 'youtube.com/watch*', 'example.com/*');
+    const matches = getMatchingWhitelistRules('https://youtube.com/watch?v=1', rules);
+    expect(matches.map(r => r.pattern)).toEqual(['youtube.com/*', 'youtube.com/watch*']);
+  });
+
+  it('excludes disabled rules that would otherwise match', () => {
+    const rules: WhitelistRule[] = [
+      { pattern: 'example.com/*', enabled: false },
+      { pattern: 'example.com/page', enabled: true },
+    ];
+    const matches = getMatchingWhitelistRules('https://example.com/page', rules);
+    expect(matches.map(r => r.pattern)).toEqual(['example.com/page']);
+  });
+
+  it('returns an empty array when nothing matches', () => {
+    expect(getMatchingWhitelistRules('https://example.com', makeRules('other.com/*'))).toEqual([]);
+  });
+
+  it('returns an empty array for an invalid URL', () => {
+    expect(getMatchingWhitelistRules('not-a-url', makeRules('example.com/*'))).toEqual([]);
+  });
+
+  it('returns an empty array for empty, null, or undefined rules', () => {
+    expect(getMatchingWhitelistRules('https://example.com', [])).toEqual([]);
+    expect(getMatchingWhitelistRules('https://example.com', null)).toEqual([]);
+    expect(getMatchingWhitelistRules('https://example.com', undefined)).toEqual([]);
+  });
+
+  it('matches case-insensitively and honours wildcards', () => {
+    const rules = makeRules('Example.COM/Path/*');
+    expect(getMatchingWhitelistRules('https://example.com/Path/Video', rules)).toHaveLength(1);
+  });
+});
+
+describe('removeWhitelistRules', () => {
+  beforeEach(() => {
+    vi.mocked(getSettings).mockReset();
+    vi.mocked(saveSettings).mockReset();
+    vi.mocked(sendMessage).mockReset();
+    vi.mocked(saveSettings).mockResolvedValue(undefined);
+  });
+
+  it('removes all listed patterns in one save and sends one WHITELIST_UPDATED', async () => {
+    vi.mocked(getSettings).mockResolvedValue({
+      whitelist: [
+        { pattern: 'youtube.com/*', enabled: true },
+        { pattern: 'youtube.com/watch*', enabled: true },
+        { pattern: 'example.com/*', enabled: true },
+      ],
+    } as Anime4KWebExtSettings);
+
+    await removeWhitelistRules(['youtube.com/*', 'youtube.com/watch*']);
+
+    expect(saveSettings).toHaveBeenCalledTimes(1);
+    expect(saveSettings).toHaveBeenCalledWith({
+      whitelist: [{ pattern: 'example.com/*', enabled: true }],
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith({ type: 'WHITELIST_UPDATED' });
+  });
+
+  it('does nothing when given no patterns', async () => {
+    await removeWhitelistRules([]);
+
+    expect(getSettings).not.toHaveBeenCalled();
+    expect(saveSettings).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when no stored rule matches', async () => {
+    vi.mocked(getSettings).mockResolvedValue({
+      whitelist: [{ pattern: 'example.com/*', enabled: true }],
+    } as Anime4KWebExtSettings);
+
+    await removeWhitelistRules(['nope.com/*']);
+
+    expect(saveSettings).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 });

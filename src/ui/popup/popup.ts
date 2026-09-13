@@ -44,12 +44,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   const addCurrentPageBtn = document.getElementById('add-current-page') as HTMLButtonElement;
   const addCurrentDomainBtn = document.getElementById('add-current-domain') as HTMLButtonElement;
   const addParentPathBtn = document.getElementById('add-parent-path') as HTMLButtonElement;
+  const removeFromWhitelistBtn = document.getElementById('remove-from-whitelist') as HTMLButtonElement;
+  const whitelistButtons = document.querySelector<HTMLElement>('.whitelist-buttons');
   const openSettingsBtn = document.getElementById('open-settings') as HTMLButtonElement;
   const statusBadge = document.getElementById('status-badge') as HTMLSpanElement;
   const colorGradingToggle = document.getElementById('color-grading-toggle') as HTMLInputElement;
 
   if (!modeSelect || !resolutionSelect || !saveButton || !whitelistToggle ||
-    !addCurrentPageBtn || !addCurrentDomainBtn || !addParentPathBtn || !openSettingsBtn) {
+    !addCurrentPageBtn || !addCurrentDomainBtn || !addParentPathBtn ||
+    !removeFromWhitelistBtn || !whitelistButtons || !openSettingsBtn) {
     console.error('Required elements not found');
     return;
   }
@@ -99,11 +102,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Initialize whitelist actions
-  initWhitelistActions({
+  const whitelistActions = initWhitelistActions({
     whitelistToggle,
     addCurrentPageBtn,
     addCurrentDomainBtn,
     addParentPathBtn,
+    removeFromWhitelistBtn,
+    whitelistButtons,
   });
 
   // Load settings
@@ -143,6 +148,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     modeSelect.value = 'builtin-mode-a';
     resolutionSelect.value = 'x2';
     whitelistToggle.checked = false;
+  }
+
+  // If the active page is already whitelisted, replace the three add buttons
+  // with the single remove button. Restricted/invalid tab URLs simply leave the
+  // add buttons in place.
+  if (currentSettings) {
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tabUrl = tabs[0]?.url;
+      if (tabUrl) {
+        whitelistActions.renderWhitelistControls(tabUrl, currentSettings.whitelist);
+      }
+    } catch (error) {
+      console.error('Error checking whitelist state for active tab:', error);
+    }
   }
 
   // Update save button when resolution changes

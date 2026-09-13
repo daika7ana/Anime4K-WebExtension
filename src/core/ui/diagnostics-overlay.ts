@@ -9,6 +9,18 @@ function formatTimingMs(value: number | null | undefined): string {
   return value.toFixed(2);
 }
 
+/** Read-only configuration values shown by the diagnostics HUD. */
+export interface DiagnosticsInfo {
+  /** Built-in preset name, or 'Custom' for a custom mode. */
+  mode: string;
+  /** Raw performance tier value, e.g. 'balanced'. */
+  performanceTier: string;
+  /** Input (source) video resolution, e.g. '1920×1080'. */
+  inputResolution: string;
+  /** Computed output target resolution, e.g. '3840×2160'. */
+  targetResolution: string;
+}
+
 /**
  * Diagnostics overlay showing live performance metrics during video enhancement.
  * Attaches to the same video element as the enhance button, positioned top-right.
@@ -22,6 +34,10 @@ export class DiagnosticsOverlay {
   private avgFrameTimeEl: HTMLElement | null = null;
   private pipelineCountEl: HTMLElement | null = null;
   private adapterInfoEl: HTMLElement | null = null;
+  private modeEl: HTMLElement | null = null;
+  private tierEl: HTMLElement | null = null;
+  private inputResolutionEl: HTMLElement | null = null;
+  private targetResolutionEl: HTMLElement | null = null;
   private timingSectionEl: HTMLElement | null = null;
   private timingTitleEl: HTMLElement | null = null;
   private timingStatusEl: HTMLElement | null = null;
@@ -33,6 +49,7 @@ export class DiagnosticsOverlay {
   private lastUpdateTime = 0;
   private hasFirstUpdate = false;
   private adapterInfo: string;
+  private info: DiagnosticsInfo | null = null;
   private video: HTMLVideoElement;
   private resizeObserver: ResizeObserver | null = null;
 
@@ -40,13 +57,22 @@ export class DiagnosticsOverlay {
   private static readonly MAX_REASONABLE_DELTA_MS = 500;
   private static readonly TIMING_THROTTLE_MS = 250;
 
-  private constructor(video: HTMLVideoElement, adapterInfo: string) {
+  private constructor(
+    video: HTMLVideoElement,
+    adapterInfo: string,
+    info: DiagnosticsInfo | null = null,
+  ) {
     this.video = video;
     this.adapterInfo = adapterInfo;
+    this.info = info;
   }
 
-  public static create(video: HTMLVideoElement, adapterInfo: string): DiagnosticsOverlay {
-    const overlay = new DiagnosticsOverlay(video, adapterInfo);
+  public static create(
+    video: HTMLVideoElement,
+    adapterInfo: string,
+    info?: DiagnosticsInfo,
+  ): DiagnosticsOverlay {
+    const overlay = new DiagnosticsOverlay(video, adapterInfo, info ?? null);
     overlay.initialize();
     return overlay;
   }
@@ -217,6 +243,62 @@ export class DiagnosticsOverlay {
     adpRow.appendChild(adpValue);
     container.appendChild(adpRow);
 
+    // Mode row (built-in preset name or "Custom")
+    const modeRow = document.createElement('div');
+    modeRow.className = 'metric';
+    const modeLabel = document.createElement('span');
+    modeLabel.className = 'metric-label';
+    modeLabel.textContent = t('diagnosticsMode', 'Mode');
+    const modeValue = document.createElement('span');
+    modeValue.className = 'metric-value';
+    modeValue.textContent = this.info?.mode ?? '--';
+    this.modeEl = modeValue;
+    modeRow.appendChild(modeLabel);
+    modeRow.appendChild(modeValue);
+    container.appendChild(modeRow);
+
+    // Performance tier row (raw value)
+    const tierRow = document.createElement('div');
+    tierRow.className = 'metric';
+    const tierLabel = document.createElement('span');
+    tierLabel.className = 'metric-label';
+    tierLabel.textContent = t('diagnosticsTier', 'Tier');
+    const tierValue = document.createElement('span');
+    tierValue.className = 'metric-value';
+    tierValue.textContent = this.info?.performanceTier ?? '--';
+    this.tierEl = tierValue;
+    tierRow.appendChild(tierLabel);
+    tierRow.appendChild(tierValue);
+    container.appendChild(tierRow);
+
+    // Input (source) resolution row
+    const inputRow = document.createElement('div');
+    inputRow.className = 'metric';
+    const inputLabel = document.createElement('span');
+    inputLabel.className = 'metric-label';
+    inputLabel.textContent = t('diagnosticsInputResolution', 'Input');
+    const inputValue = document.createElement('span');
+    inputValue.className = 'metric-value';
+    inputValue.textContent = this.info?.inputResolution ?? '--';
+    this.inputResolutionEl = inputValue;
+    inputRow.appendChild(inputLabel);
+    inputRow.appendChild(inputValue);
+    container.appendChild(inputRow);
+
+    // Target (output) resolution row
+    const targetRow = document.createElement('div');
+    targetRow.className = 'metric';
+    const targetLabel = document.createElement('span');
+    targetLabel.className = 'metric-label';
+    targetLabel.textContent = t('diagnosticsTargetResolution', 'Target');
+    const targetValue = document.createElement('span');
+    targetValue.className = 'metric-value';
+    targetValue.textContent = this.info?.targetResolution ?? '--';
+    this.targetResolutionEl = targetValue;
+    targetRow.appendChild(targetLabel);
+    targetRow.appendChild(targetValue);
+    container.appendChild(targetRow);
+
     // GPU/CPU per-effect timing section (populated from a profiler snapshot)
     const timingSection = document.createElement('div');
     timingSection.className = 'timing-section';
@@ -287,8 +369,35 @@ export class DiagnosticsOverlay {
     this.timingStatusEl = null;
     this.timingGridEl = null;
     this.timingFramesEl = null;
+    this.modeEl = null;
+    this.tierEl = null;
+    this.inputResolutionEl = null;
+    this.targetResolutionEl = null;
     this.timingVisible = false;
     this.lastTimingRenderTime = Number.NEGATIVE_INFINITY;
+  }
+
+  /**
+   * Update one or more read-only configuration rows. Safe to call after
+   * {@link destroy}: missing elements are simply skipped.
+   */
+  public setInfo(info: Partial<DiagnosticsInfo>): void {
+    const base = this.info
+      ?? { mode: '', performanceTier: '', inputResolution: '', targetResolution: '' };
+    this.info = { ...base, ...info };
+
+    if (info.mode !== undefined && this.modeEl) {
+      this.modeEl.textContent = info.mode;
+    }
+    if (info.performanceTier !== undefined && this.tierEl) {
+      this.tierEl.textContent = info.performanceTier;
+    }
+    if (info.inputResolution !== undefined && this.inputResolutionEl) {
+      this.inputResolutionEl.textContent = info.inputResolution;
+    }
+    if (info.targetResolution !== undefined && this.targetResolutionEl) {
+      this.targetResolutionEl.textContent = info.targetResolution;
+    }
   }
 
   /**
